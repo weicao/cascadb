@@ -150,9 +150,15 @@ private:
     fprintf(stdout, "RawSize:    %.1f MB (estimated)\n",
             ((static_cast<int64_t>(kKeySize + FLAGS_value_size) * num_)
              / 1048576.0));
+#ifdef HAS_SNAPPY
     fprintf(stdout, "FileSize:   %.1f MB (estimated)\n",
             (((kKeySize + FLAGS_value_size * FLAGS_compression_ratio) * num_)
              / 1048576.0));
+#else
+    fprintf(stdout, "FileSize:   %.1f MB (estimated, compression disabled)\n",
+            (((kKeySize + FLAGS_value_size) * num_)
+             / 1048576.0));
+#endif
     PrintWarnings();
     fprintf(stdout, "------------------------------------------------\n");
   }
@@ -167,11 +173,11 @@ private:
     fprintf(stdout,
             "WARNING: Assertions are enabled; benchmarks unnecessarily slow\n");
 #endif
-#ifndef SNAPPY
+#ifndef HAS_SNAPPY
     fprintf(stdout,
             "WARNING: Snappy compression is disabled\n");
 #endif
-#ifndef LIBAIO
+#ifndef HAS_LIBAIO
     fprintf(stdout,
             "WARNING: Linux AIO is disabled, Posix AIO (simulate AIO with user threads) is used instead\n");
 #endif
@@ -279,7 +285,7 @@ private:
  public:
 
   Benchmark()
-  : directory_(create_linux_fs_directory(FLAGS_db)),
+  : directory_(create_fs_directory(FLAGS_db)),
     comparator_(new LexicalComparator()),
     db_(NULL),
     db_num_(0),
@@ -365,7 +371,9 @@ private:
     Options opts;
     opts.dir = directory_;
     opts.comparator = comparator_;
+#ifdef HAS_SNAPPY
     opts.compress = kSnappyCompress;
+#endif
     if (FLAGS_cache_size) {
         opts.cache_limit = FLAGS_cache_size;
     }

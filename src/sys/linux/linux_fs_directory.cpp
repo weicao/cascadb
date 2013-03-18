@@ -10,7 +10,9 @@
 #include <unistd.h>
 
 // linux
+#ifdef HAS_LIBAIO
 #include <libaio.h>
+#endif
 
 #include "sys/sys.h"
 #include "util/logger.h"
@@ -18,6 +20,8 @@
 
 using namespace std;
 using namespace cascadb;
+
+#ifdef HAS_LIBAIO
 
 #define MAX_AIO_EVENTS 128
 
@@ -249,17 +253,19 @@ static void* handle_io_complete(void *ptr)
     return NULL;
 }
 
+#endif // LIBAIO
+
 AIOFile* LinuxFSDirectory::open_aio_file(const std::string& filename)
 {
+#ifdef HAS_LIBAIO
     LinuxAIOFile* file = new LinuxAIOFile(fullpath(filename));
     if (file && file->open()) {
         return file; 
     }
     delete file;
     return NULL;
+#else
+    return PosixFSDirectory::open_aio_file(filename);
+#endif
 }
 
-Directory* cascadb::create_linux_fs_directory(const std::string& path)
-{
-    return new LinuxFSDirectory(path);
-}

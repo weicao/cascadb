@@ -363,8 +363,3 @@ const std::string PosixFSDirectory::fullpath(const std::string& filename)
     return dir_ + "/" + filename;
 }
 
-
-Directory* cascadb::create_posix_fs_directory(const std::string& path)
-{
-    return new PosixFSDirectory(path);
-}

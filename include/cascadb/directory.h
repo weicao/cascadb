@@ -30,11 +30,7 @@ public:
 
 Directory* create_ram_directory();
 
-// todo: add macro to test whether posix fs directory is supported
-Directory* create_posix_fs_directory(const std::string& path);
-
-// todo: add macro to test whether linxu fs directory is supported
-Directory* create_linux_fs_directory(const std::string& path);
+Directory* create_fs_directory(const std::string& path);
 
 }
 

@@ -1,6 +1,6 @@
 #include <malloc.h>
 
-#ifdef SNAPPY
+#ifdef HAS_SNAPPY
 #include <snappy.h>
 #endif
 
@@ -704,7 +704,7 @@ bool Layout::compress_data(Slice input_buffer, size_t input_size,
         return true;
     }
     case kSnappyCompress: {
-#ifdef SNAPPY
+#ifdef HAS_SNAPPY
         size_t max_size = snappy::MaxCompressedLength(input_size);
         Slice buffer = alloc_aligned_buffer(max_size);
         if (!buffer.size()) {
@@ -735,7 +735,7 @@ bool Layout::uncompress_data(Slice input_buffer, size_t input_size,
         return true;
     }
     case kSnappyCompress: {
-#ifdef SNAPPY
+#ifdef HAS_SNAPPY
         Slice buffer = alloc_aligned_buffer(output_size);
         if (!snappy::RawUncompress(input_buffer.data(), input_size, (char *)buffer.data())) {
             LOG_ERROR("snappy uncompress error");

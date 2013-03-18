@@ -28,13 +28,24 @@ ENDIF("${isSystemDir}" STREQUAL "-1")
 
 add_definitions("-g -O2 -Wall")
 
+include_directories(
+${PROJECT_SOURCE_DIR}/include
+${PROJECT_SOURCE_DIR}/src
+)
+
+link_directories(
+${PROJECT_SOURCE_DIR}/lib
+)
+
 # check dependencies
 
 # Check Snappy
 include(${CMAKE_SOURCE_DIR}/cmake/FindSnappy.cmake)
 if (SNAPPY_FOUND)
     message(STATUS "Find snappy include:${SNAPPY_INCLUDE_DIR} libs:${SNAPPY_LIBRARIES}")
-    add_definitions("-DSNAPPY")
+    add_definitions("-DHAS_SNAPPY")
+    include_directories(${SNAPPY_INCLUDE_DIR})
+    link_libraries(${SNAPPY_LIBRARIES})
 else (SNAPPY_FOUND)
     message(WARNING "Cannot find snappy, compression is disabled in cascadb")
 endif (SNAPPY_FOUND)
@@ -43,30 +54,24 @@ endif (SNAPPY_FOUND)
 include(${CMAKE_SOURCE_DIR}/cmake/FindLibaio.cmake)
 if (LIBAIO_FOUND)
     message(STATUS "Find libaio include:${LIBAIO_INCLUDE_DIR} libs:${LIBAIO_LIBRARIES}")
-    add_definitions("-DLIBAIO")
+    add_definitions("-DHAS_LIBAIO")
+    include_directories(${LIBAIO_INCLUDE_DIR})
+    link_libraries(${LIBAIO_LIBRARIES})
 else (LIBAIO_FOUND)
-    message(WARNING "Cannot find libaio, posix is used instead")
+    message(WARNING "Cannot find libaio, posix aio is used instead")
 endif (LIBAIO_FOUND)
 
+# environment
 
-# Source files
-
-include_directories(
-${PROJECT_SOURCE_DIR}/include
-${PROJECT_SOURCE_DIR}/src
-${SNAPPY_INCLUDE_DIR}
-${LIBAIO_INCLUDE_DIR}
-)
-
-link_directories(
-${PROJECT_SOURCE_DIR}/lib
-)
+if (${CMAKE_SYSTEM_NAME} MATCHES "Linux")
+    add_definitions("-DOS_LINUX")
+endif (${CMAKE_SYSTEM_NAME} MATCHES "Linux")
 
 set(CASCADB_LIBS
 pthread m rt dl z
-${SNAPPY_LIBRARIES}
-${LIBAIO_LIBRARIES}
 )
+
+# Source files
 
 MESSAGE(STATUS "Installation path is: ${CMAKE_INSTALL_PREFIX}   (overwrite with -DCMAKE_INSTALL_PREFIX=/your/path)")
 
