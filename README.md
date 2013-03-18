@@ -31,10 +31,12 @@ e.g. `bin/db_bench --num=1000000`, This will create and test on a database of a 
 
 ### Read Performance
 Read benchmark results after sequential insertions
+
         readrandom   :       1.125 micros/op;                 
         readseq      :       1.282 micros/op;      
 
 Read benchmark results after random insertions
+
         readrandom   :       3.227 micros/op;                 
         readseq      :       1.295 micros/op;                 
 
