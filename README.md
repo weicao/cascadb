@@ -26,23 +26,17 @@ Running bin/db_bench to get detailed performance report of how CascaDB running o
 e.g. `bin/db_bench --num=1000000`, This will create and test on a database of a million records, each record has a 16 byte key, and a 100 byte value.
 
 ### Write Performance
-``
-fillseq      :       1.020 micros/op;                 
-fillrandom   :       2.559 micros/op;                 
-``
+        fillseq      :       1.020 micros/op;                 
+        fillrandom   :       2.559 micros/op;                 
 
 ### Read Performance
 Read benchmark results after sequential insertions
-``
-readrandom   :       1.125 micros/op;                 
-readseq      :       1.282 micros/op;      
-``
+        readrandom   :       1.125 micros/op;                 
+        readseq      :       1.282 micros/op;      
 
 Read benchmark results after random insertions
-``
-readrandom   :       3.227 micros/op;                 
-readseq      :       1.295 micros/op;                 
-``
+        readrandom   :       3.227 micros/op;                 
+        readseq      :       1.295 micros/op;                 
 
 ## Have a try!
 
