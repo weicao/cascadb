@@ -2,7 +2,7 @@
 # Once done, this will define
 #
 #  SNAPPY_FOUND - system has Snappy installed
-#  SNAPPY_INCLUDE_DIRS - the Snappy include directories
+#  SNAPPY_INCLUDE_DIR - the Snappy include directories
 #  SNAPPY_LIBRARIES - link these to use Snappy
 #
 # The user may wish to set, in the CMake GUI or otherwise, this variable:

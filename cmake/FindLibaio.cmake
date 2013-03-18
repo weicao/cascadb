@@ -2,7 +2,7 @@
 # Once done, this will define
 #
 #  LIBAIO_FOUND - system has Libaio installed
-#  LIBAIO_INCLUDE_DIRS - the Libaio include directories
+#  LIBAIO_INCLUDE_DIR - the Libaio include directories
 #  LIBAIO_LIBRARIES - link these to use Libaio
 #
 # The user may wish to set, in the CMake GUI or otherwise, this variable:
