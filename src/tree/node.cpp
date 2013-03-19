@@ -298,7 +298,7 @@ void InnerNode::maybe_cascade()
         unlock();
         return;
     }
-    
+   
     assert(idx >= 0);
     MsgBuf* b = msgbuf(idx);
     bid_t nid = child(idx);
@@ -315,6 +315,16 @@ void InnerNode::maybe_cascade()
     assert(node);
     node->cascade(b, this);
     node->dec_ref();
+
+    // it's possible to cascade twice
+    // lock is released in child, so it's nescessarty to obtain it again
+    read_lock();
+    if (msgcnt_ >= tree_->options_.inner_node_msg_count ||
+        size() >= tree_->options_.inner_node_page_size) {
+        maybe_cascade();
+    } else {
+        unlock();
+    }
 }
 
 void InnerNode::add_pivot(Slice key, bid_t nid, std::vector<DataNode*>& path)
