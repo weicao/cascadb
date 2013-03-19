@@ -2,7 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file. See the AUTHORS file for names of contributors.
 
-// Copied from LevelDB
+// This file is copied from LevelDB and modifed a little 
+// to add LevelDB style benchmark
 
 #ifndef _CASCADB_BENCH_HISTOGRAM_H_
 #define _CASCADB_BENCH_HISTOGRAM_H_
