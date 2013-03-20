@@ -254,14 +254,14 @@ bool Cache::get_table_settings(const std::string& tbn, TableSettings& tbs)
 
 bool Cache::must_evict()
 {
-    ScopedMutex lock(&nodes_mtx_);
+    ScopedMutex lock(&size_mtx_);
 
     return size_ >= options_.cache_limit;
 }
 
 bool Cache::need_evict()
 {
-    ScopedMutex lock(&nodes_mtx_);
+    ScopedMutex lock(&size_mtx_);
 
     size_t threshold = (options_.cache_limit * 
         options_.cache_evict_high_watermark) / 100;
@@ -328,8 +328,11 @@ void Cache::evict()
             }
         }
     }
+
+    ScopedMutex size_lock(&size_mtx_);
     // update size
     size_ = total_size;
+    size_lock.unlock();
     
     LRUComparator comp;
     sort(clean_nodes.begin(), clean_nodes.end(), comp);
@@ -358,9 +361,11 @@ void Cache::evict()
         delete node;
     }
 
+    size_lock.lock();
     // update size
     assert(size_ >= evicted_size);
     size_ -= evicted_size;
+    size_lock.unlock();
 
     lock.unlock();
 
@@ -437,8 +442,11 @@ void Cache::write_back()
                 }
             }
         }
+
+        ScopedMutex size_lock(&size_mtx_);
         // update size
         size_ = total_size;
+        size_lock.unlock();
 
         vector<Node*> flushed_nodes;
         size_t flushed_size = 0;

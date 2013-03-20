@@ -88,11 +88,12 @@ private:
 
     Mutex tables_mtx_;
     std::map<std::string, TableSettings> tables_;
-    
-    Mutex nodes_mtx_;
+
+    // TODO make me atomic
+    Mutex size_mtx_;
     // total memory size occupied by nodes,
     // updated everytime the flusher thread runs
-    size_t size_;
+    size_t size_;   
 
     class CacheKey {
     public:
@@ -108,6 +109,8 @@ private:
         std::string tbn;
         bid_t nid;
     };
+
+    Mutex nodes_mtx_;
 
     std::map<CacheKey, Node*> nodes_;
 
