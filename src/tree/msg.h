@@ -78,15 +78,20 @@ public:
     void clear();
     
     // You should lock MsgBuf before use iterator related operations
-    void lock()
+    void read_lock()
     {
-        mtx_.lock();
+        lock_.read_lock();
     }
     
+    void write_lock()
+    {
+        lock_.write_lock();
+    }
+
     // unlock MsgBuf after iterator related operations
     void unlock()
     {
-        mtx_.unlock();
+        lock_.unlock();
     }
 
 #ifdef FAST_VECTOR
@@ -133,7 +138,7 @@ public:
     
 private:
     Comparator          *comp_;
-    mutable Mutex       mtx_;
+    mutable RWLock      lock_;
     ContainerType       container_;
     size_t              size_;
 };

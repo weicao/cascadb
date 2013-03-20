@@ -110,7 +110,7 @@ private:
         bid_t nid;
     };
 
-    Mutex nodes_mtx_;
+    RWLock nodes_lock_;
 
     std::map<CacheKey, Node*> nodes_;
 

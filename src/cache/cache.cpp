@@ -96,7 +96,7 @@ void Cache::flush_table(const std::string& tbn)
 
     ScopedMutex global_lock(&global_mtx_);
 
-    ScopedMutex lock(&nodes_mtx_);
+    nodes_lock_.write_lock();
     for(map<CacheKey, Node*>::iterator it = nodes_.begin();
         it != nodes_.end(); it++ ) {
         if (it->first.tbn  == tbn) {
@@ -116,7 +116,7 @@ void Cache::flush_table(const std::string& tbn)
             }
         }
     }
-    lock.unlock();
+    nodes_lock_.unlock();
 
     if (dirty_nodes.size()) {
         LOG_INFO("flush table " << tbn << ", write " << dirty_nodes.size() << " nodes, "
@@ -152,7 +152,7 @@ void Cache::del_table(const std::string& tbn, bool flush)
 
     ScopedMutex global_lock(&global_mtx_);
 
-    ScopedMutex nodes_lock(&nodes_mtx_);
+    nodes_lock_.write_lock();
     // TODO: improve me
     for(map<CacheKey, Node*>::iterator it = nodes_.begin();
         it != nodes_.end(); it++ ) {
@@ -165,7 +165,7 @@ void Cache::del_table(const std::string& tbn, bool flush)
             total_count ++;
         }
     }
-    nodes_lock.unlock();
+    nodes_lock_.unlock();
 
     global_lock.unlock();
 
@@ -186,10 +186,11 @@ void Cache::put(const std::string& tbn, bid_t nid, Node* node)
         evict();
     }
 
-    ScopedMutex lock(&nodes_mtx_);
+    nodes_lock_.write_lock();
     assert(nodes_.find(key) == nodes_.end());
     nodes_[key] = node;
     node->inc_ref();
+    nodes_lock_.unlock();
 }
 
 Node* Cache::get(const std::string& tbn, bid_t nid)
@@ -202,14 +203,15 @@ Node* Cache::get(const std::string& tbn, bid_t nid)
         assert(false);
     }
 
-    ScopedMutex lock(&nodes_mtx_);
+    nodes_lock_.read_lock();
     map<CacheKey, Node*>::iterator it = nodes_.find(key);
     if (it != nodes_.end()) {
         node = it->second;
         node->inc_ref();
+        nodes_lock_.unlock();
         return node;
     }
-    lock.unlock();
+    nodes_lock_.unlock();
 
     while (must_evict()) {
         evict();
@@ -226,7 +228,7 @@ Node* Cache::get(const std::string& tbn, bid_t nid)
     assert(node->size() == block->size());
     tbs.layout->destroy(block);
     
-    lock.lock();
+    nodes_lock_.write_lock();
     it = nodes_.find(key);
     if (it != nodes_.end()) {
         LOG_WARN("detect multiple threads're loading node " << nid << " concurrently");
@@ -235,8 +237,9 @@ Node* Cache::get(const std::string& tbn, bid_t nid)
     } else {
         nodes_[key] = node;
     }
-
     node->inc_ref();
+    nodes_lock_.unlock();
+
     return node;
 }
 
@@ -289,7 +292,7 @@ void Cache::evict()
     vector<Node*> zombies;
     vector<Node*> clean_nodes;
 
-    ScopedMutex lock(&nodes_mtx_);
+    nodes_lock_.write_lock();
 
     for(map<CacheKey, Node*>::iterator it = nodes_.begin();
         it != nodes_.end(); it++ ) {
@@ -367,7 +370,7 @@ void Cache::evict()
     size_ -= evicted_size;
     size_lock.unlock();
 
-    lock.unlock();
+    nodes_lock_.unlock();
 
     // clear zombies
     if (zombies.size()) {
@@ -411,7 +414,7 @@ void Cache::write_back()
         vector<Node*> expired_nodes;
         size_t expired_size = 0;
 
-        ScopedMutex lock(&nodes_mtx_);
+        nodes_lock_.write_lock();
 
         for(map<CacheKey, Node*>::iterator it = nodes_.begin();
             it != nodes_.end(); it++ ) {
@@ -506,7 +509,7 @@ void Cache::write_back()
                 }
             }
         }
-        lock.unlock();
+        nodes_lock_.unlock();
         
         // flush
         if (flushed_nodes.size()) {
@@ -631,7 +634,7 @@ void Cache::debug_print(std::ostream& out)
     size_t clean_size = 0;
     size_t clean_count = 0;
 
-    ScopedMutex lock(&nodes_mtx_);
+    nodes_lock_.read_lock();
 
     for(map<CacheKey, Node*>::iterator it = nodes_.begin();
         it != nodes_.end(); it++ ) {
@@ -659,7 +662,7 @@ void Cache::debug_print(std::ostream& out)
         }
     }
 
-    lock.unlock();
+    nodes_lock_.unlock();
 
     out << "### Dump Cache ###" << endl;
     out << "Total " << total_count << " nodes (" 

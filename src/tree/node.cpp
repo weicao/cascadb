@@ -108,7 +108,7 @@ bool InnerNode::cascade(MsgBuf *mb, InnerNode* parent){
     read_lock();
 
     // lock message buffer
-    mb->lock();
+    mb->write_lock();
     size_t oldcnt = mb->count();
     size_t oldsz = mb->size();
 
@@ -229,7 +229,7 @@ void InnerNode::write_msgbuf(const Msg& m, int idx)
     MsgBuf *b = msgbuf(idx);
     assert(b);
     
-    b->lock();
+    b->write_lock();
     size_t oldcnt = b->count();
     size_t oldsz = b->size();
 
@@ -246,7 +246,7 @@ void InnerNode::write_msgbuf(MsgBuf::Iterator begin,
     MsgBuf *b = msgbuf(idx);
     assert(b);
 
-    b->lock();
+    b->write_lock();
     size_t oldcnt = b->count();
     size_t oldsz = b->size();
 
@@ -265,7 +265,7 @@ int InnerNode::find_msgbuf_maxcnt()
         it != pivots_.end(); it++ ) {
         idx ++;
         if (it->msgbuf->count() > maxcnt ) {
-            it->msgbuf->lock();
+            it->msgbuf->read_lock();
             maxcnt = it->msgbuf->count();
             it->msgbuf->unlock();
             ret = idx;
@@ -282,7 +282,7 @@ int InnerNode::find_msgbuf_maxsz()
         it != pivots_.end(); it++ ) {
         idx ++;
         if (it->msgbuf->size() > maxsz ) {
-            it->msgbuf->lock();
+            it->msgbuf->read_lock();
             maxsz = it->msgbuf->size();
             it->msgbuf->unlock();
             ret = idx;
@@ -507,7 +507,7 @@ bool InnerNode::find(Slice key, Slice& value, InnerNode *parent)
     MsgBuf* b = msgbuf(idx);
     assert(b);
 
-    b->lock(); 
+    b->read_lock(); 
     MsgBuf::Iterator it = b->find(key);
     if (it != b->end() && it->key == key ) {
         if (it->type == Put) {
@@ -640,7 +640,7 @@ bool LeafNode::cascade(MsgBuf *mb, InnerNode* parent)
     write_lock();
 
     // lock message buffer from parent
-    mb->lock();
+    mb->write_lock();
     size_t oldcnt = mb->count();
     size_t oldsz = mb->size();
 
