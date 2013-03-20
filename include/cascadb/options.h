@@ -26,8 +26,8 @@ public:
         comparator = NULL;
 
         inner_node_page_size = 4<<20;       // 4M
-        inner_node_children_number = 64;
-        leaf_node_page_size = 4<<20;        // 4M
+        inner_node_children_number = 128;
+        leaf_node_page_size = 1<<20;        // 4M
         inner_node_msg_count = -1;          // unlimited
         leaf_node_record_count = -1;        // unlimited
 
