@@ -8,6 +8,9 @@
 #include <snappy.h>
 #endif
 
+// to get inner/leaf node information
+#include "tree/node.h"
+
 #include "serialize/layout.h"
 #include "util/logger.h"
 #include "util/bits.h"
@@ -91,6 +94,7 @@ bool Layout::init(bool create)
         }
         init_block_offset_index();
         init_holes();
+        print_index_info();
 
         ScopedMutex block_index_lock(&block_index_mtx_);
         LOG_INFO(block_index_.size() << " blocks found");
@@ -777,6 +781,38 @@ uint64_t Layout::get_offset(size_t size)
     }
 
     return offset;
+}
+
+void Layout::print_index_info()
+{
+    size_t inner_cnt = 0;
+    size_t inner_inflated_size = 0;
+    size_t inner_compressed_size = 0;
+    size_t leaf_cnt = 0;
+    size_t leaf_inflated_size = 0;
+    size_t leaf_compressed_size = 0;
+
+    ScopedMutex block_index_lock(&block_index_mtx_);
+
+    for (BlockIndexType::iterator it = block_index_.begin();
+        it != block_index_.end(); it++ ) {
+        if (IS_LEAF(it->first)) {
+            leaf_cnt ++;
+            leaf_inflated_size += it->second->inflated_size;
+            leaf_compressed_size += it->second->compressed_size;
+        } else {
+            inner_cnt ++;
+            inner_inflated_size += it->second->inflated_size;
+            inner_compressed_size += it->second->compressed_size;
+        }
+     }
+
+     LOG_INFO("inner nodes count " << inner_cnt
+        << ", total inflated size " << inner_inflated_size
+        << ", total compressed size " << inner_compressed_size << endl
+        << "leaf node count " << leaf_cnt
+        << ", total inflated_size " << leaf_inflated_size
+        << ", total compressed_size " << leaf_compressed_size);
 }
 
 void Layout::init_block_offset_index()

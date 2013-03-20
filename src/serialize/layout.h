@@ -170,6 +170,8 @@ protected:
     // get the position to write for given size
     uint64_t get_offset(size_t size);
 
+    void print_index_info();
+
     void init_block_offset_index();
 
     void init_holes();
