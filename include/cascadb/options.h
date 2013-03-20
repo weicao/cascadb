@@ -25,13 +25,18 @@ public:
         dir = NULL;
         comparator = NULL;
 
-        inner_node_page_size = 4<<20;       // 4M
-        inner_node_children_number = 128;
-        leaf_node_page_size = 1<<20;        // 4M
-        inner_node_msg_count = -1;          // unlimited
-        leaf_node_record_count = -1;        // unlimited
+        inner_node_page_size = 4<<20;       // 4M, bigger inner node improve write performance
+                                            // but degrade read performance
+        inner_node_children_number = 128;   // bigger fanout will decrease the number of inner nodes,
+                                            // but degrade write performance
+        leaf_node_page_size = 1<<20;        // 1M, smaller leaf improve read performance,
+                                            // but increases the number of inner nodes
+        inner_node_msg_count = -1;          // unlimited, leaved for writing unit test,
+                                            // you should NOT use it
+        leaf_node_record_count = -1;        // unlimited, leaved for writing unit test,
+                                            // you should NOT use it
 
-        cache_limit = 512 << 20;            // 256M
+        cache_limit = 512 << 20;            // 512M, it's best to be set twice of the total size of inner nodes
         cache_dirty_high_watermark = 30;    // 30%
         cache_dirty_expire = 60000;         // 1 minute
         cache_writeback_ratio = 1;          // 1%
