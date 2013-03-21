@@ -29,7 +29,7 @@ public:
                                             // but degrade read performance
         inner_node_children_number = 128;   // bigger fanout will decrease the number of inner nodes,
                                             // but degrade write performance
-        leaf_node_page_size = 1<<20;        // 1M, smaller leaf improve read performance,
+        leaf_node_page_size = 1<<19;        // 512k, smaller leaf improve read performance,
                                             // but increases the number of inner nodes
         inner_node_msg_count = -1;          // unlimited, leaved for writing unit test,
                                             // you should NOT use it
