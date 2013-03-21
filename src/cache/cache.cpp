@@ -68,9 +68,9 @@ bool Cache::init()
 
 bool Cache::add_table(const std::string& tbn, NodeFactory *factory, Layout *layout)
 {
-    ScopedMutex lock(&tables_mtx_);
-    
+    tables_lock_.write_lock();
     if (tables_.find(tbn) != tables_.end()) {
+        tables_lock_.unlock();
         LOG_ERROR("table " << tbn << " already registered in cache");
         return false;
     }
@@ -78,7 +78,9 @@ bool Cache::add_table(const std::string& tbn, NodeFactory *factory, Layout *layo
     TableSettings tbs;
     tbs.factory = factory;
     tbs.layout = layout;
+
     tables_[tbn] = tbs;
+    tables_lock_.unlock();
     return true;
 }
 
@@ -140,13 +142,14 @@ void Cache::del_table(const std::string& tbn, bool flush)
         flush_table(tbn);
     }
 
-    ScopedMutex tables_lock(&tables_mtx_);
+    tables_lock_.write_lock();
     map<string, TableSettings>::iterator it = tables_.find(tbn);
     if (it == tables_.end()) {
+        tables_lock_.unlock();
         return;
     }
     tables_.erase(it);
-    tables_lock.unlock();
+    tables_lock_.unlock();
 
     size_t total_count = 0;
 
@@ -245,13 +248,14 @@ Node* Cache::get(const std::string& tbn, bid_t nid)
 
 bool Cache::get_table_settings(const std::string& tbn, TableSettings& tbs)
 {
-    ScopedMutex lock(&tables_mtx_);
-
+    tables_lock_.read_lock();
     map<string, TableSettings>::iterator it = tables_.find(tbn);
     if (it != tables_.end()) {
         tbs = it->second;
+        tables_lock_.unlock();
         return true;
     }
+    tables_lock_.unlock();
     return false;
 }
 
@@ -414,8 +418,7 @@ void Cache::write_back()
         vector<Node*> expired_nodes;
         size_t expired_size = 0;
 
-        nodes_lock_.write_lock();
-
+        nodes_lock_.read_lock();
         for(map<CacheKey, Node*>::iterator it = nodes_.begin();
             it != nodes_.end(); it++ ) {
             Node *node = it->second;
@@ -451,6 +454,8 @@ void Cache::write_back()
         size_ = total_size;
         size_lock.unlock();
 
+        nodes_lock_.unlock();
+
         vector<Node*> flushed_nodes;
         size_t flushed_size = 0;
 
@@ -477,8 +482,10 @@ void Cache::write_back()
         // need to flush more dirty pages
         if ((dirty_size - flushed_size) >= (options_.cache_limit * 
             options_.cache_dirty_high_watermark)/100 && flushed_size < goal) {
+
             vector<Node*> candidates;
-            
+
+            nodes_lock_.read_lock();
             for (map<CacheKey, Node*>::iterator it = nodes_.begin();
                 it != nodes_.end(); it++ ) {
                 Node *node = it->second;
@@ -488,6 +495,7 @@ void Cache::write_back()
                     candidates.push_back(node);
                 }
             }
+            nodes_lock_.unlock();
 
             sort(candidates.begin(), candidates.end(), comparator);
 
@@ -509,7 +517,6 @@ void Cache::write_back()
                 }
             }
         }
-        nodes_lock_.unlock();
         
         // flush
         if (flushed_nodes.size()) {

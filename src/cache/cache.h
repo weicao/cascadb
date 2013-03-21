@@ -86,7 +86,7 @@ protected:
 private:
     Options options_;
 
-    Mutex tables_mtx_;
+    RWLock tables_lock_;
     std::map<std::string, TableSettings> tables_;
 
     // TODO make me atomic
