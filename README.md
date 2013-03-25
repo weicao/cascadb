@@ -50,7 +50,7 @@ Read benchmark results after random insertions
 
         Options opts;
         opts.dir = create_fs_directory("/tmp/db_bench");
-        opts.comparator = new LexcialComparator();
+        opts.comparator = new LexicalComparator();
         opts.compress = kSnappyCompress;
 
         const char *dbname = "example";

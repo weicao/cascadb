@@ -465,7 +465,7 @@ void InnerNode::rm_pivot(bid_t nid, std::vector<DataNode*>& path)
         // TODO adjst size
     } else {
         vector<Pivot>::iterator it;
-        for (vector<Pivot>::iterator it = pivots_.begin(); 
+        for (it = pivots_.begin(); 
             it != pivots_.end(); it ++) {
             if (it->child == nid) {
                 break;

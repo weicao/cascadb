@@ -609,14 +609,14 @@ void Cache::delete_nodes(vector<Node*>& nodes)
         Node* node = nodes[i];
         bid_t nid = node->nid();
 
-        delete node;
-
         // TODO: check node is stored to layout
-
         TableSettings tbs;
         if (!get_table_settings(node->table_name(), tbs)) {
             assert(false);
         }
+
+        delete node;
+        
         Layout *layout = tbs.layout;
         assert(layout);
        
