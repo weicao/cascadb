@@ -8,6 +8,21 @@ Yet another write-optimized storage engine, using buffered B-tree algorithm insp
 * Support Snappy compression.
 * Support Direct IO and Linux AIO.
 
+## Dependencies
+CascaDB can have better performance if libaio and google snappy library 're installed. Otherwise
+Posix AIO (simulate AIO with multiple threads which is not true asynchronous) is used instead
+and data blocks're not compressed.
+
+* libaio
+
+    On Ubuntu Linux
+
+        sudo apt-get install libaio-dev
+    On RHEL
+
+        sudo yum install libaio-devel
+
+* [snappy](http://code.google.com/p/snappy/)
 
 ## Compile
 CascaDB utilizes CMake to build, so first of all you should install CMake.
