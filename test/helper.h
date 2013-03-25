@@ -1,5 +1,5 @@
-#ifndef _CASCADB_TEST_HELPER_H_
-#define _CASCADB_TEST_HELPER_H_
+#ifndef CASCADB_TEST_HELPER_H_
+#define CASCADB_TEST_HELPER_H_
 
 #define PUT(mb, k, v) \
 {\

@@ -2,8 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file. See the AUTHORS file for names of contributors.
 
-#ifndef _CASCADB_COMPARATOR_H_
-#define _CASCADB_COMPARATOR_H_
+#ifndef CASCADB_COMPARATOR_H_
+#define CASCADB_COMPARATOR_H_
 
 #include <assert.h>
 #include "slice.h"

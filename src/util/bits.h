@@ -2,8 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file. See the AUTHORS file for names of contributors.
 
-#ifndef _CASCADB_UTIL_BITS_H_
-#define _CASCADB_UTIL_BITS_H_
+#ifndef CASCADB_UTIL_BITS_H_
+#define CASCADB_UTIL_BITS_H_
 
 #define ROUND_UP(x, n)  ((((x)+ (n) - 1) / (n)) * (n))
 #define ROUND_DOWN(x, n)  (((x) / (n)) * (n))

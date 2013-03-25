@@ -5,8 +5,8 @@
 // This file is copied from LevelDB and modifed a little 
 // to add LevelDB style benchmark
 
-#ifndef _CASCADB_BENCH_RANDOM_H_
-#define _CASCADB_BENCH_RANDOM_H_
+#ifndef CASCADB_BENCH_RANDOM_H_
+#define CASCADB_BENCH_RANDOM_H_
 
 #include <stdint.h>
 

@@ -2,8 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file. See the AUTHORS file for names of contributors.
 
-#ifndef _CASCADB_SERIALIZE_SUPER_BLOCK_H_
-#define _CASCADB_SERIALIZE_SUPER_BLOCK_H_
+#ifndef CASCADB_SERIALIZE_SUPER_BLOCK_H_
+#define CASCADB_SERIALIZE_SUPER_BLOCK_H_
 
 #include "cascadb/options.h"
 #include "block.h"

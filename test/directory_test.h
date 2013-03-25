@@ -1,5 +1,5 @@
-#ifndef _CASCADB_TEST_DIRECTORY_TEST_H_
-#define _CASCADB_TEST_DIRECTORY_TEST_H_
+#ifndef CASCADB_TEST_DIRECTORY_TEST_H_
+#define CASCADB_TEST_DIRECTORY_TEST_H_
 
 #include <malloc.h>
 #include <map>

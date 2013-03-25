@@ -2,8 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file. See the AUTHORS file for names of contributors.
 
-#ifndef _CASCADB_TREE_FAST_VECTOR_H_
-#define _CASCADB_TREE_FAST_VECTOR_H_
+#ifndef CASCADB_TREE_FAST_VECTOR_H_
+#define CASCADB_TREE_FAST_VECTOR_H_
 
 #include <vector>
 #include <stdexcept>

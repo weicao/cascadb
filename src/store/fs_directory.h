@@ -2,8 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file. See the AUTHORS file for names of contributors.
 
-#ifndef _CASCADB_STORE_FS_DIRECTORY_H_
-#define _CASCADB_STORE_FS_DIRECTORY_H_
+#ifndef CASCADB_STORE_FS_DIRECTORY_H_
+#define CASCADB_STORE_FS_DIRECTORY_H_
 
 #include "cascadb/directory.h"
 
