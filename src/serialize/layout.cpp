@@ -402,6 +402,16 @@ bool Layout::load_index()
     return true;
 }
 
+void Layout::flush_fly_holes()
+{
+    HoleListType::iterator it;
+
+    for (it = fly_hole_list_.begin(); it != fly_hole_list_.end();) {
+        add_hole(it->offset, it->size);
+        it = fly_hole_list_.erase(it);
+    }
+}
+
 bool Layout::flush_index()
 {
     size_t size = get_index_size();
@@ -460,6 +470,10 @@ bool Layout::flush_index()
     superblock_->index_block_meta->compressed_size = compressed_size;
 
     free_buffer(compressed_data);
+	
+    // add fly holes to hole list
+    flush_fly_holes();
+
     return true;
 }
 
@@ -568,7 +582,6 @@ bool Layout::write_block_meta(BlockMeta* meta, BlockWriter& writer)
     return true;
 }
 
-
 bool Layout::get_block_meta(bid_t bid, BlockMeta& meta)
 {
     ScopedMutex lock(&block_index_mtx_);
@@ -583,9 +596,6 @@ bool Layout::get_block_meta(bid_t bid, BlockMeta& meta)
 void Layout::set_block_meta(bid_t bid, const BlockMeta& meta)
 {
     BlockMeta *p;
-    bool has_hole = false;
-    uint64_t offset;
-    size_t size;
 
     ScopedMutex lock(&block_index_mtx_);
     BlockIndexType::iterator it = block_index_.find(bid);
@@ -594,19 +604,18 @@ void Layout::set_block_meta(bid_t bid, const BlockMeta& meta)
         block_index_[bid] = p;
     } else {
         p = it->second;
-        has_hole = true;
-        offset = p->offset;
-        size = PAGE_ROUND_UP(p->compressed_size);
         block_offset_index_.erase(p->offset);
+
+        Hole hole;
+        hole.offset = p->offset;
+        hole.size = PAGE_ROUND_UP(p->compressed_size);
+
+        fly_hole_list_.push_back(hole);
     }
 
     *p = meta;
     block_offset_index_[meta.offset] = p;
     lock.unlock();
-
-    if (has_hole) {
-        add_hole(offset, size);
-    }
 }
 
 void Layout::del_block_meta(bid_t bid)

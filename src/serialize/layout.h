@@ -95,6 +95,9 @@ protected:
     // Serialize index into the index block and write it out
     bool flush_index();
 
+    // Add fly holes to hole list
+    void flush_fly_holes();
+
     // Deserialize superblock from buffer
     bool read_superblock(BlockReader& reader);
 
@@ -219,6 +222,7 @@ private:
     // A chain of holes in file
     typedef std::deque<Hole>            HoleListType;
     HoleListType                        hole_list_;
+    HoleListType                        fly_hole_list_;
 
     // the rest are statistics information
     size_t                              fly_writes_;    // todo atomic
