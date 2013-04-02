@@ -7,7 +7,6 @@
 
 #include "cascadb/options.h"
 #include "tree/node.h"
-#include "tree/node_store.h"
 #include "serialize/block.h"
 #include "serialize/layout.h"
 #include "sys/sys.h"
@@ -16,6 +15,11 @@
 #include <vector>
 
 namespace cascadb {
+
+class NodeFactory {
+public:
+    virtual Node* new_node(bid_t nid) = 0;
+};
 
 // Node cache of fixed size
 // When the percentage of dirty nodes reaches the high watermark, or get expired,
@@ -47,7 +51,7 @@ public:
     void put(const std::string& tbn, bid_t nid, Node* node);
     
     // Acquire node, if node doesn't exist in cache, load it from layout
-    Node* get(const std::string& tbn, bid_t nid);
+    Node* get(const std::string& tbn, bid_t nid, bool skeleton_only);
     
     // Write back dirty nodes if any condition satisfied,
     // Sweep out dead nodes
@@ -121,27 +125,6 @@ private:
     // scan nodes not being used,
     // async flush dirty page out
     Thread* flusher_;
-};
-
-// Glue Cache and Tree
-class CachedNodeStore : public NodeStore {
-public:
-    CachedNodeStore(Cache *cache, const std::string& table_name, Layout *layout);
-
-    ~CachedNodeStore();
-
-    bool init(NodeFactory *node_factory);
-
-    void put(bid_t nid, Node* node);
-
-    Node* get(bid_t nid);
-
-    void flush();
-
-private:
-    Cache           *cache_;
-    std::string     table_name_;
-    Layout          *layout_;
 };
 
 }

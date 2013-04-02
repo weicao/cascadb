@@ -15,7 +15,6 @@ using namespace cascadb;
 DBImpl::~DBImpl()
 {
     delete tree_;
-    delete node_store_;
     delete cache_;
     delete layout_;
     delete file_;
@@ -53,9 +52,7 @@ bool DBImpl::init()
         return false;
     }
 
-    node_store_ = new CachedNodeStore(cache_, name_, layout_);
-    
-    tree_ = new Tree(name_, options_, node_store_);
+    tree_ = new Tree(name_, options_, cache_, layout_);
     if (!tree_->init()) {
         LOG_ERROR("tree init error");
         return false;

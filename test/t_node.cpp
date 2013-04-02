@@ -3,48 +3,18 @@
 #define private public
 #define protected public
 
-#include "tree/node.h"
+#include "store/ram_directory.h"
+#include "serialize/layout.h"
 #include "tree/tree.h"
 #include "helper.h"
 
 using namespace cascadb;
 using namespace std;
 
-TEST(Pivot, serialize)
-{
-    char buffer[4096];
-    Block blk(buffer, 0, 4096);
-    BlockReader reader(&blk);
-    BlockWriter writer(&blk);
-    
-    LexicalComparator comp;
-    MsgBuf mb1(&comp);
-    PUT(mb1, "a", "1");
-    PUT(mb1, "b", "1");
-    PUT(mb1, "c", "1");
-    
-    Pivot pv1("abc", 5U, &mb1);
-    pv1.write_to(writer);
-    
-    EXPECT_EQ(pv1.size(), blk.size());
-    
-    Pivot pv2;
-    MsgBuf mb2(&comp);
-    pv2.msgbuf = &mb2;
-    pv2.read_from(reader);
-    
-    EXPECT_EQ("abc", pv2.key);
-    EXPECT_EQ(5U, pv2.child);
-    EXPECT_EQ(3U, mb2.count());
-    CHK_MSG(mb2.get(0), Put, "a", "1");
-    CHK_MSG(mb2.get(1), Put, "b", "1");
-    CHK_MSG(mb2.get(2), Put, "c", "1");
-}
-
 TEST(Record, serialize)
 {
     char buffer[4096];
-    Block blk(buffer, 0, 4096);
+    Block blk(Slice(buffer, 4096), 0, 0);
     BlockReader reader(&blk);
     BlockWriter writer(&blk);
     
@@ -61,18 +31,20 @@ TEST(Record, serialize)
 
 TEST(Tree, bootstrap)
 {
-    LexicalComparator comp;
-    TestNodeStore store;
-
     Options opts;
-    opts.comparator = &comp;
+    opts.comparator = new LexicalComparator();
     opts.inner_node_msg_count = 4;
     opts.inner_node_children_number = 2;
     opts.leaf_node_record_count = 4;
 
-    Tree *tree = new Tree("", opts, &store);
-    EXPECT_TRUE(tree->init());
-    EXPECT_TRUE(tree->root_!=NULL);
+    Directory *dir = new RAMDirectory();
+    AIOFile *file = dir->open_aio_file("tree_test");
+    Layout *layout = new Layout(file, 0, opts);
+    ASSERT_TRUE(layout->init(true));
+    Cache *cache = new Cache(opts);
+    ASSERT_TRUE(cache->init());
+    Tree *tree = new Tree("", opts, cache, layout);
+    ASSERT_TRUE(tree->init());
     
     InnerNode *n1 = tree->root_;
     EXPECT_EQ(NID_START, n1->nid_);
@@ -88,7 +60,7 @@ TEST(Tree, bootstrap)
     // create leaf#1
     EXPECT_EQ(0U, n1->first_msgbuf_->count());
     EXPECT_TRUE(n1->first_child_ != NID_NIL);
-    LeafNode *l1 = (LeafNode*)store.get_raw(n1->first_child_);
+    LeafNode *l1 = (LeafNode*)tree->load_node(n1->first_child_, false);
     EXPECT_EQ(NID_LEAF_START, l1->nid_);
     EXPECT_EQ(4U, l1->records_.size());
     CHK_REC(l1->records_[0], "a", "1");
@@ -110,7 +82,7 @@ TEST(Tree, bootstrap)
     EXPECT_TRUE(n1->pivots_[0].key == "e");
     EXPECT_TRUE(n1->pivots_[0].child != NID_NIL);
     EXPECT_TRUE(n1->pivots_[0].msgbuf != NULL);
-    LeafNode *l2 = (LeafNode*)store.get_raw(n1->pivots_[0].child);
+    LeafNode *l2 = (LeafNode*)tree->load_node(n1->pivots_[0].child, false);
     EXPECT_EQ(NID_LEAF_START+1, l2->nid_);
     EXPECT_EQ(4U, l1->records_.size());
     CHK_REC(l1->records_[0], "a", "1");
@@ -126,7 +98,7 @@ TEST(Tree, bootstrap)
     n1->put("a", "2");
     n1->put("b", "2");
     n1->put("bb", "1");
-    EXPECT_EQ(70U, n1->size());
+    EXPECT_EQ(92U, n1->size());
 
     n1->put("e", "2");
     
@@ -148,7 +120,7 @@ TEST(Tree, bootstrap)
     EXPECT_TRUE(n1->pivots_[0].child != NID_NIL);
     EXPECT_TRUE(n1->pivots_[0].child != l2->nid_);
     EXPECT_TRUE(n1->pivots_[0].msgbuf != NULL);
-    LeafNode *l3 = (LeafNode*)store.get_raw(n1->pivots_[0].child);
+    LeafNode *l3 = (LeafNode*)tree->load_node(n1->pivots_[0].child, false);
     EXPECT_EQ(NID_LEAF_START+2, l3->nid_);
     EXPECT_EQ(2U, l1->records_.size());
     CHK_REC(l1->records_[0], "a", "2");
@@ -157,19 +129,19 @@ TEST(Tree, bootstrap)
     CHK_REC(l3->records_[0], "bb", "1");
     CHK_REC(l3->records_[1], "c", "1");
     CHK_REC(l3->records_[2], "d", "1");
-    EXPECT_EQ(37U, n1->size());
+    EXPECT_EQ(59U, n1->size());
     
     // node#2
     EXPECT_EQ(n3->pivots_.size(), 1U);
     EXPECT_TRUE(n3->pivots_[0].key == "e");
     EXPECT_TRUE(n3->pivots_[0].child != NID_NIL);
-    InnerNode *n2 = (InnerNode*)store.get_raw(n3->pivots_[0].child);
+    InnerNode *n2 = (InnerNode*)tree->load_node(n3->pivots_[0].child, false);
     EXPECT_EQ(NID_START+1, n2->nid_);
     EXPECT_EQ(1U, n2->first_msgbuf_->count());
     CHK_MSG(n2->first_msgbuf_->get(0),  Put, "e", "2");
     EXPECT_EQ(l2->nid_, n2->first_child_);
     EXPECT_EQ(0U, n2->pivots_.size());
-    EXPECT_EQ(29U, n2->size());
+    EXPECT_EQ(40U, n2->size());
     
     n3->put("abc", "1");
     n3->put("bb", "2");
@@ -207,7 +179,7 @@ TEST(Tree, bootstrap)
     EXPECT_TRUE(n2->pivots_[0].child != NID_NIL);
     EXPECT_EQ("f", n2->pivots_[0].key);
     EXPECT_EQ(0U, n2->pivots_[0].msgbuf->count());
-    LeafNode *l4 = (LeafNode*)store.get_raw(n2->pivots_[0].child);
+    LeafNode *l4 = (LeafNode*)tree->load_node(n2->pivots_[0].child, false);
     EXPECT_EQ(NID_LEAF_START+3, l4->nid_);
     EXPECT_EQ(2U, l2->records_.size());
     CHK_REC(l2->records_[0], "e", "2");
@@ -217,45 +189,60 @@ TEST(Tree, bootstrap)
     CHK_REC(l4->records_[1], "g", "2");
     CHK_REC(l4->records_[2], "h", "1");
     
+    l1->dec_ref();
+    l2->dec_ref();
+    l3->dec_ref();
+    l4->dec_ref();
+
+    n2->dec_ref();
+
     delete tree;
+    delete cache;
+    delete layout;
+    delete file;
+    delete dir;
+    delete opts.comparator;
 }
 
 TEST(InnerNode, serialize)
 {
-    char buffer[4096];
-    Block blk(buffer, 0, 4096);
-    BlockReader reader(&blk);
-    BlockWriter writer(&blk);
-
-    LexicalComparator comp;
-    TestNodeStore store;
-
     Options opts;
-    opts.comparator = &comp; 
+    opts.comparator = new LexicalComparator();
     opts.inner_node_msg_count = 4;
     opts.inner_node_children_number = 2;
     opts.leaf_node_record_count = 4;
-    Tree *tree = new Tree("", opts, &store);
 
-    InnerNode n1("", NID_START);
-    n1.set_tree(tree);
+    Directory *dir = new RAMDirectory();
+    AIOFile *file = dir->open_aio_file("tree_test");
+    Layout *layout = new Layout(file, 0, opts);
+    ASSERT_TRUE(layout->init(true));
+    Cache *cache = new Cache(opts);
+    ASSERT_TRUE(cache->init());
+    Tree *tree = new Tree("", opts, cache, layout);
+    ASSERT_TRUE(tree->init());
+
+    char buffer[40960];
+    Block blk(Slice(buffer, 40960), 0, 0);
+    BlockReader reader(&blk);
+    BlockWriter writer(&blk);
+
+    InnerNode n1("", NID_START, tree);
     n1.bottom_ = true;
     n1.first_child_ = NID_LEAF_START;
-    n1.first_msgbuf_ = new MsgBuf(&comp);
+    n1.first_msgbuf_ = new MsgBuf(opts.comparator);
     PUT(*n1.first_msgbuf_, "a", "1");
     PUT(*n1.first_msgbuf_, "b", "1");
     PUT(*n1.first_msgbuf_, "c", "1");
     n1.pivots_.resize(1);
     n1.pivots_[0].key = Slice("d").clone();
     n1.pivots_[0].child = NID_LEAF_START + 1;
-    n1.pivots_[0].msgbuf = new MsgBuf(&comp);
+    n1.pivots_[0].msgbuf = new MsgBuf(opts.comparator);
 
-    EXPECT_TRUE(n1.write_to(writer) == true);
+    size_t skeleton_size;
+    EXPECT_TRUE(n1.write_to(writer, skeleton_size) == true);
 
-    InnerNode n2("", NID_START);
-    n2.set_tree(tree);
-    EXPECT_TRUE(n2.read_from(reader) == true);
-    EXPECT_EQ(n2.size(), blk.size());
+    InnerNode n2("", NID_START, tree);
+    EXPECT_TRUE(n2.read_from(reader, false) == true);
 
     EXPECT_TRUE(n2.bottom_ == true);
     EXPECT_EQ(NID_LEAF_START, n2.first_child_);
@@ -271,6 +258,11 @@ TEST(InnerNode, serialize)
     EXPECT_EQ(0U, n2.pivots_[0].msgbuf->count());
 
     delete tree;
+    delete cache;
+    delete layout;
+    delete file;
+    delete dir;
+    delete opts.comparator;
 }
 
 /*
@@ -418,22 +410,24 @@ TEST(InnerNode, cascade)
 
 TEST(InnerNode, add_pivot)
 {
-    LexicalComparator comp;
-    TestNodeStore store;
-
     Options opts;
-    opts.comparator = &comp;
+    opts.comparator = new LexicalComparator();
     opts.inner_node_children_number = 4;
-    
-    Tree *tree = new Tree("", opts, &store);
 
-    tree->init();
+    Directory *dir = new RAMDirectory();
+    AIOFile *file = dir->open_aio_file("tree_test");
+    Layout *layout = new Layout(file, 0, opts);
+    ASSERT_TRUE(layout->init(true));
+    Cache *cache = new Cache(opts);
+    ASSERT_TRUE(cache->init());
+    Tree *tree = new Tree("", opts, cache, layout);
+    ASSERT_TRUE(tree->init());
 
     InnerNode *n1 = tree->new_inner_node();
 
     n1->bottom_ = true;
     n1->first_child_ = NID_START + 100;
-    n1->first_msgbuf_ = new MsgBuf(&comp);
+    n1->first_msgbuf_ = new MsgBuf(opts.comparator);
     n1->msgcnt_ = 0;
     n1->msgbufsz_ = n1->first_msgbuf_->size();
 
@@ -464,34 +458,42 @@ TEST(InnerNode, add_pivot)
     EXPECT_EQ("f", n1->pivots_[2].key);
 
     n1->dec_ref();
+
     delete tree;
+    delete cache;
+    delete layout;
+    delete file;
+    delete dir;
+    delete opts.comparator;
 }
 
 TEST(InnerNode, split)
 {
-    LexicalComparator comp;
-    TestNodeStore store;
-
     Options opts;
-    opts.comparator = &comp; 
+    opts.comparator = new LexicalComparator();
     opts.inner_node_children_number = 3;
 
-    Tree *tree = new Tree("", opts, &store);
-
-    tree->init();
+    Directory *dir = new RAMDirectory();
+    AIOFile *file = dir->open_aio_file("tree_test");
+    Layout *layout = new Layout(file, 0, opts);
+    ASSERT_TRUE(layout->init(true));
+    Cache *cache = new Cache(opts);
+    ASSERT_TRUE(cache->init());
+    Tree *tree = new Tree("", opts, cache, layout);
+    ASSERT_TRUE(tree->init());
 
     InnerNode *n1 = tree->new_inner_node();
     InnerNode *n2 = tree->new_inner_node();
 
     n1->bottom_ = false;
     n1->first_child_ = n2->nid_;
-    n1->first_msgbuf_ = new MsgBuf(&comp);
+    n1->first_msgbuf_ = new MsgBuf(opts.comparator);
     n1->msgcnt_ = 0;
     n1->msgbufsz_ = n1->first_msgbuf_->size();
 
     n2->bottom_ = false;
     n2->first_child_ = NID_START + 100;
-    n2->first_msgbuf_ = new MsgBuf(&comp);
+    n2->first_msgbuf_ = new MsgBuf(opts.comparator);
     n2->msgcnt_ = 0;
     n2->msgbufsz_ = n2->first_msgbuf_->size();
 
@@ -530,7 +532,7 @@ TEST(InnerNode, split)
     EXPECT_EQ(1U, n1->pivots_.size());
     EXPECT_EQ("e", n1->pivots_[0].key);
     EXPECT_NE(NID_NIL, n1->pivots_[0].child);
-    InnerNode *n3 = (InnerNode*)tree->load_node(n1->pivots_[0].child);
+    InnerNode *n3 = (InnerNode*)tree->load_node(n1->pivots_[0].child, false);
     EXPECT_TRUE(n3 != NULL);
     EXPECT_EQ(1U, n3->pivots_.size());
     EXPECT_EQ("f", n3->pivots_[0].key);
@@ -538,7 +540,13 @@ TEST(InnerNode, split)
     n1->dec_ref();
     n2->dec_ref();
     n3->dec_ref();
+
     delete tree;
+    delete cache;
+    delete layout;
+    delete file;
+    delete dir;
+    delete opts.comparator;
 }
 
 TEST(InnerNode, split_recursive_to_root)

@@ -27,15 +27,18 @@ public:
 
         inner_node_page_size = 4<<20;       // 4M, bigger inner node improve write performance
                                             // but degrade read performance
-        inner_node_children_number = 128;   // bigger fanout will decrease the number of inner nodes,
+        inner_node_children_number = 16;    // bigger fanout will decrease the number of inner nodes,
                                             // but degrade write performance
-        leaf_node_page_size = 1<<20;        // 1M, smaller leaf improve read performance,
+        leaf_node_page_size = 4<<20;        // 4M, smaller leaf improve read performance,
                                             // but increases the number of inner nodes
-        inner_node_msg_count = -1;          // unlimited, leaved for writing unit test,
+        leaf_node_bucket_size = 128<<10;    // leaf nodes 're divdided into serveral buckets,
+                                            // bucket is the unit of disk read when do point queries,
+                                            // smaller value favors point query but may decrease
+                                            // compression ratio.
+        inner_node_msg_count = -1;          // unlimited by default, leaved for writing unit test,
                                             // you should NOT use it
-        leaf_node_record_count = -1;        // unlimited, leaved for writing unit test,
+        leaf_node_record_count = -1;        // unlimited by default, leaved for writing unit test,
                                             // you should NOT use it
-
         cache_limit = 512 << 20;            // 512M, it's best to be set twice of the total size of inner nodes
         cache_dirty_high_watermark = 30;    // 30%
         cache_dirty_expire = 60000;         // 1 minute
@@ -70,6 +73,9 @@ public:
 
     // Page size of leaf node
     size_t leaf_node_page_size;
+
+    // Bucket size inside leaf node
+    size_t leaf_node_bucket_size;
 
     // Maximum count of buffered messages in InnerNode.
     // For writing testcase

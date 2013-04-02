@@ -13,8 +13,6 @@
 #include "sys/sys.h"
 #include "fast_vector.h"
 
-#define FAST_VECTOR
-
 // Implement message and message buffer
 
 namespace cascadb {
@@ -94,11 +92,7 @@ public:
         lock_.unlock();
     }
 
-#ifdef FAST_VECTOR
     typedef FastVector<Msg> ContainerType;
-#else
-    typedef std::vector<Msg> ContainerType;
-#endif
     
     typedef ContainerType::iterator Iterator;
     

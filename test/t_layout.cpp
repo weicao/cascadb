@@ -67,7 +67,7 @@ public:
                 writer.writeUInt8(i&0xff);
             }
             Callback *cb = new Callback(this, &LayoutTest::callback, (bid_t)i);
-            layout->async_write(i, write_bufs[i], cb);
+            layout->async_write(i, write_bufs[i], size, cb);
         }
 
         while(results.size() != 1000) cascadb::usleep(10000); // 10ms
@@ -97,7 +97,7 @@ public:
             ASSERT_TRUE(results[i]);
             if (results[i]) {
                 ASSERT_EQ(write_bufs[i]->size(), read_bufs[i]->size());
-                ASSERT_EQ(0, memcmp(write_bufs[i]->buf(), read_bufs[i]->buf(), write_bufs[i]->size()));
+                ASSERT_EQ(0, memcmp(write_bufs[i]->start(), read_bufs[i]->start(), write_bufs[i]->size()));
             }
             layout->destroy(read_bufs[i]);
         }
@@ -105,10 +105,10 @@ public:
 
     void BlockingRead() {
         for (int i = 0; i < 1000; i++ ) {
-            Block *read_buf = layout->read(i);
+            Block *read_buf = layout->read(i, false);
             ASSERT_TRUE(read_buf != NULL);
             ASSERT_EQ(write_bufs[i]->size(), read_buf->size());
-            ASSERT_EQ(0, memcmp(write_bufs[i]->buf(), read_buf->buf(), write_bufs[i]->size()));
+            ASSERT_EQ(0, memcmp(write_bufs[i]->start(), read_buf->start(), write_bufs[i]->size()));
             layout->destroy(read_buf);
         }
     }

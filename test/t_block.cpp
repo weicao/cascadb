@@ -7,7 +7,7 @@ using namespace std;
 TEST(Block, searialize)
 {
     char buffer[4096];
-    Block blk(buffer, 0, 4096);
+    Block blk(Slice(buffer, 4096), 0, 0);
     
     BlockWriter bw(&blk);
     ASSERT_TRUE(bw.writeUInt8(1));
@@ -45,7 +45,7 @@ TEST(Block, searialize)
 TEST(Block, writer_overflow)
 {
     char buffer[4096];
-    Block blk(buffer, 0, 4096);
+    Block blk(Slice(buffer, 4096), 0, 0);
     BlockWriter bw(&blk);
     
     bw.seek(4095);
@@ -65,7 +65,7 @@ TEST(Block, writer_overflow)
 TEST(Block, reader_overflow)
 {
     char buffer[4096];
-    Block blk(buffer, 0, 4096);
+    Block blk(Slice(buffer, 4096), 0, 0);
     BlockReader br(&blk);
     BlockWriter bw(&blk);
     uint8_t n;

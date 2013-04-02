@@ -5,7 +5,6 @@
 #ifndef CASCADB_SERIALIZE_SUPER_BLOCK_H_
 #define CASCADB_SERIALIZE_SUPER_BLOCK_H_
 
-#include "cascadb/options.h"
 #include "block.h"
 
 namespace cascadb {
@@ -22,7 +21,6 @@ public:
         major_version = 0;                  // "version 0.1"
         minor_version = 1;
 
-        compress = kNoCompress;
         index_block_meta = NULL;
         crc = 0;
     }
@@ -31,7 +29,6 @@ public:
     uint8_t         major_version;
     uint8_t         minor_version;
 
-    Compress        compress;
     BlockMeta       *index_block_meta;
     uint16_t        crc;                    // crc of SuperBlock
 };

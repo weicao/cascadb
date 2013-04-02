@@ -13,7 +13,7 @@ TEST(DB, put) {
     opts.comparator = new LexicalComparator();
 
     DB *db = DB::open("test_db", opts);
-    EXPECT_TRUE(db != NULL);
+    ASSERT_TRUE(db != NULL);
 
     ASSERT_TRUE(db->put("key1", "value1"));
     ASSERT_TRUE(db->put("key2", "value2"));
@@ -40,7 +40,7 @@ TEST(DB, del) {
     opts.comparator = new LexicalComparator();
 
     DB *db = DB::open("test_db", opts);
-    EXPECT_TRUE(db != NULL);
+    ASSERT_TRUE(db != NULL);
 
     ASSERT_TRUE(db->put("key1", "value1"));
     ASSERT_TRUE(db->put("key2", "value2"));
@@ -69,10 +69,12 @@ TEST(DB, batch_write) {
     opts.inner_node_page_size = 4 * 1024;
     opts.inner_node_children_number = 64;
     opts.leaf_node_page_size = 4 * 1024;
+    opts.leaf_node_bucket_size = 512;
     opts.cache_limit = 32 * 1024;
+    opts.compress = kSnappyCompress;
 
     DB *db = DB::open("test_db", opts);
-    EXPECT_TRUE(db != NULL);
+    ASSERT_TRUE(db != NULL);
 
     for (uint64_t i = 0; i < 100000; i++ ) {
         char buf[16] = {0};
@@ -115,10 +117,12 @@ TEST(DB, batch_delete) {
     opts.inner_node_page_size = 4 * 1024;
     opts.inner_node_children_number = 64;
     opts.leaf_node_page_size = 4 * 1024;
+    opts.leaf_node_bucket_size = 512;
     opts.cache_limit = 32 * 1024;
+    opts.compress = kSnappyCompress;
 
     DB *db = DB::open("test_db", opts);
-    EXPECT_TRUE(db != NULL);
+    ASSERT_TRUE(db != NULL);
 
     for (uint64_t i = 0; i < 100000; i++ ) {
         char buf[16] = {0};

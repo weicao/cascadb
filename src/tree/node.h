@@ -12,6 +12,7 @@
 #include "cascadb/comparator.h"
 #include "serialize/layout.h"
 #include "msg.h"
+#include "record.h"
 
 namespace cascadb {
 
@@ -32,32 +33,17 @@ public:
     {
     }
     
-    size_t size();
-    
-    bool read_from(BlockReader& reader);
-    
-    bool write_to(BlockWriter& writer);
-    
-    Slice  key;
-    bid_t   child;
-    MsgBuf  *msgbuf;
-};
+    Slice       key;
+    bid_t       child;
 
-class Record {
-public:
-    Record() {}
-
-    Record(Slice k, Slice v) 
-    : key(k), value(v) {}
-
-    size_t size();
-        
-    bool read_from(BlockReader& reader);
-    
-    bool write_to(BlockWriter& writer);
-    
-    Slice  key;
-    Slice  value;
+    // msgbuf, NULL if not loaded yet
+    MsgBuf      *msgbuf;
+    // offset of msgbuf in block
+    uint32_t    offset;
+    // length of msgbuf in block
+    uint32_t    length;
+    // length of msgbuf before compression
+    uint32_t    uncompressed_length;
 };
 
 class Node {
@@ -75,11 +61,15 @@ public:
     
     virtual ~Node() {}
     
+    // size of node in memory
     virtual size_t size() = 0;
-    
-    virtual bool read_from(BlockReader& reader) = 0;
 
-    virtual bool write_to(BlockWriter& writer) = 0;
+    // size of node after serialization
+    virtual size_t estimated_buffer_size() = 0;
+
+    virtual bool read_from(BlockReader& reader, bool skeleton_only) = 0;
+
+    virtual bool write_to(BlockWriter& writer, size_t& skeleton_size) = 0;
 
     /***************************
          setter and getters
@@ -265,10 +255,12 @@ public:
     }
 
     size_t size();
+
+    size_t estimated_buffer_size();
     
-    bool read_from(BlockReader& reader);
+    bool read_from(BlockReader& reader, bool skeleton_only);
     
-    bool write_to(BlockWriter& writer);
+    bool write_to(BlockWriter& writer, size_t& skeleton_size);
 
     bid_t           root_node_id;
     bid_t           next_inner_node_id;
@@ -276,13 +268,19 @@ public:
     size_t          tree_depth;
 };
 
+enum NodeStatus {
+    kNew,
+    kUnloaded,
+    kSkeletonLoaded,
+    kFullLoaded
+};
+
 class InnerNode;
-class LeafNode;
 
 class DataNode : public Node {
 public:
-    DataNode(const std::string& table_name, bid_t nid)
-    : Node(table_name, nid), tree_(NULL)
+    DataNode(const std::string& table_name, bid_t nid, Tree *tree)
+    : Node(table_name, nid), tree_(tree), status_(kNew)
     {
     }
 
@@ -296,26 +294,18 @@ public:
     
     virtual void lock_path(Slice key, std::vector<DataNode*>& path) = 0;
 
-    // getters and setters
-
-    void set_tree(Tree* tree)
-    {
-        tree_ = tree;
-    }
-
-    Tree* get_tree()
-    {
-        return tree_;
-    }
-
 protected:
     Tree            *tree_;
+
+    NodeStatus      status_;
 };
+
+class LeafNode;
 
 class InnerNode : public DataNode {
 public:
-    InnerNode(const std::string& table_name, bid_t nid)
-    : DataNode(table_name, nid),
+    InnerNode(const std::string& table_name, bid_t nid, Tree *tree)
+    : DataNode(table_name, nid, tree),
       bottom_(false),
       first_child_(NID_NIL),
       first_msgbuf_(NULL),
@@ -352,10 +342,12 @@ public:
     size_t pivot_size(Slice key);
     
     size_t size();
+
+    size_t estimated_buffer_size();
     
-    bool read_from(BlockReader& reader);
+    bool read_from(BlockReader& reader, bool skeleton_only);
     
-    bool write_to(BlockWriter& writer);
+    bool write_to(BlockWriter& writer, size_t& skeleton_size);
 
     void lock_path(Slice key, std::vector<DataNode*>& path);
     
@@ -371,8 +363,8 @@ protected:
     bid_t child(int idx);
     void set_child(int idx, bid_t c);
     
-    void write_msgbuf(const Msg& m, int idx);
-    void write_msgbuf(MsgBuf::Iterator begin, MsgBuf::Iterator end, int idx);
+    void insert_msgbuf(const Msg& m, int idx);
+    void insert_msgbuf(MsgBuf::Iterator begin, MsgBuf::Iterator end, int idx);
     
     int find_msgbuf_maxcnt();
     int find_msgbuf_maxsz();
@@ -381,11 +373,24 @@ protected:
     
     void split(std::vector<DataNode*>& path);
 
+    bool load_msgbuf(int idx);
+    bool load_all_msgbuf();
+    bool load_all_msgbuf(BlockReader& reader);
+    bool read_msgbuf(BlockReader& reader, 
+                     size_t compressed_length,
+                     size_t uncompressed_length,
+                     MsgBuf *mb, Slice buffer);
+
+    bool write_msgbuf(BlockWriter& writer, MsgBuf *mb, Slice buffer);
+
     // true if children're leaf nodes
     bool bottom_;
 
     bid_t first_child_;
     MsgBuf* first_msgbuf_;
+    uint32_t first_msgbuf_offset_;
+    uint32_t first_msgbuf_length_;
+    uint32_t first_msgbuf_uncompressed_length_;
     
     std::vector<Pivot> pivots_;
 
@@ -396,39 +401,49 @@ protected:
 
 class LeafNode : public DataNode { 
 public:
-    LeafNode(const std::string& table_name, bid_t nid)
-    : DataNode(table_name, nid),
-      balancing_(false),
-      left_sibling_(NID_NIL),
-      right_sibling_(NID_NIL),
-      recsz_(0)
-    {
-        assert(nid >= NID_LEAF_START);
-    }
+    LeafNode(const std::string& table_name, bid_t nid, Tree *tree);
     
     ~LeafNode();
-    
+
     virtual bool cascade(MsgBuf *mb, InnerNode* parent);
     
     virtual bool find(Slice key, Slice& value, InnerNode* parent);
     
     size_t size();
     
-    bool read_from(BlockReader& reader);
+    size_t estimated_buffer_size();
+
+    bool read_from(BlockReader& reader, bool skeleton_only);
     
-    bool write_to(BlockWriter& writer);
+    bool write_to(BlockWriter& writer, size_t& skeleton_size);
 
     void lock_path(Slice key, std::vector<DataNode*>& path);
     
 protected:
     Record to_record(const Msg& msg);
-    
+  
     void split(Slice anchor);
     
     void merge(Slice anchor);
     
-    size_t calc_recsz();
-    
+    // refresh buckets_info_ after buckets_ is modified
+    void refresh_buckets_info();
+    bool read_buckets_info(BlockReader& reader);
+    bool write_buckets_info(BlockWriter& writer);
+
+    bool load_bucket(size_t idx);
+    bool load_all_buckets();
+    bool load_all_buckets(BlockReader& reader);
+    bool read_bucket(BlockReader& reader, 
+                     size_t compressed_length,
+                     size_t uncompressed_length,
+                     RecordBucket *bucket, Slice buffer);
+    bool read_bucket(BlockReader& reader,
+                     RecordBucket *bucket);
+
+    bool write_bucket(BlockWriter& writer, RecordBucket *bucket, Slice buffer);
+    bool write_bucket(BlockWriter& writer, RecordBucket *bucket);
+
 private:
     // either spliting or merging to get tree balanced
     bool                    balancing_;
@@ -436,8 +451,20 @@ private:
     bid_t                   left_sibling_;
     bid_t                   right_sibling_;
     
-    std::vector<Record>     records_;
-    size_t                  recsz_;
+    // records're divided into buckets,
+    // each bucket can be loaded individually
+    struct BucketInfo{
+        Slice               key;
+        uint32_t            offset;
+        uint32_t            length;
+        uint32_t            uncompressed_length;
+    };
+    size_t                  buckets_info_size_;
+
+    std::vector<BucketInfo> buckets_info_;
+
+    RecordBuckets           records_;
+
 };
 
 

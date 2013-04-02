@@ -7,11 +7,11 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <string.h>
 #include <string>
 
 #include "cascadb/slice.h"
-
-///@todo read/write into block & compression
+#include "util/bits.h"
 
 namespace cascadb {
 
@@ -20,21 +20,37 @@ typedef uint64_t bid_t;
 // Chunk of memory buffered/managed by Layout
 class Block {
 public:
-    Block(Slice s, size_t size)
-    : buf_((char*)(s.data())), size_(size), limit_(s.size())
+    Block(Slice buf, size_t start, size_t size)
+    : buf_(buf), start_(start), size_(size)
     {
-    }
-
-    Block(char* b, size_t s, size_t l)
-    : buf_(b), size_(s), limit_(l)
-    {
+        assert(start_ < buf_.size());
+        assert(start_ + size_ <= buf_.size());
     }
     
-    char* buf() {return buf_;}
-    void set_size(size_t size) {assert(size <= limit_); size_ = size;}
+    Slice buffer() {return buf_;}
+
     size_t size() {return size_;}
-    size_t limit() {return limit_;}
-    size_t remain() {return limit_-size_;}
+
+    void set_size(size_t size) 
+    {
+        assert(start_ + size_ <= buf_.size());
+        size_ = size;
+    }
+
+    inline const char* start()
+    {
+        return buf_.data() + start_;
+    }
+
+    inline size_t capacity()
+    {
+        return buf_.size() - start_;
+    }
+
+    inline size_t remain()
+    {
+        return capacity() - size_;
+    }
     
     void clear() {size_ = 0;}
     
@@ -45,9 +61,9 @@ private:
     Block(Block& o);  // usage denied
     Block& operator=(Block& o); // usage denied
 
-    char* buf_;     // buffer begin
-    size_t size_;   // buffer size
-    size_t limit_;  // maximum size
+    Slice buf_;     // buffer
+    size_t start_;  // start offset in buffer
+    size_t size_;   // size of buffer
 };
 
 // Read operations to Block
@@ -58,12 +74,32 @@ public:
     : block_(block), offset_(0)
     {
     }
+
+    char *addr()
+    {
+        return (char *)block_->start() + pos();
+    }
     
     void seek(size_t offset)
     {
         offset_ = offset;
     }
     
+    size_t pos()
+    {
+        return offset_;
+    }
+
+    bool skip(size_t length)
+    {
+        if (offset_ + length <= block_->size_) {
+            offset_ += length;
+            return true;
+        } else {
+            return false;
+        }
+    }
+
     size_t remain()
     {
         assert(offset_ <= block_->size_);
@@ -82,7 +118,7 @@ protected:
     bool readUInt(T* v) {
         assert(offset_ <= block_->size_);
         if (offset_ + sizeof(T) <= block_->size_) {
-            *v = *(T*)(block_->buf_ + offset_);
+            *v = *(T*)(block_->start() + offset_);
             offset_ += sizeof(T);
             return true;
         } else {
@@ -103,16 +139,38 @@ public:
     : block_(block), offset_(0)
     {
     }
+
+    char *addr()
+    {
+        return (char *)block_->start() + pos();
+    }
     
     void seek(size_t offset)
     {
         offset_ = offset;
     }
 
+    size_t pos()
+    {
+        return offset_;
+    }
+
+    bool skip(size_t length)
+    {
+        if (offset_ + length <= block_->capacity()) {
+            offset_ += length;
+            if(block_->size_ < offset_) {
+                block_->size_ = offset_;
+            }
+            return true;
+        } else {
+            return false;
+        }
+    }
+
     size_t remain()
     {
-        assert(offset_ <= block_->limit_);
-        return block_->limit_ - offset_;
+        return block_->capacity() - offset_;
     }
     
     bool writeBool(bool v) {return writeInt(v);}
@@ -125,9 +183,9 @@ public:
 protected:
     template<typename T>
     bool writeInt(T v) {
-        assert(offset_ <= block_->limit_);
-        if (offset_ + sizeof(T) <= block_->limit_) {
-            *(T*)(block_->buf_ + offset_) = v;
+        assert(offset_ <= block_->capacity());
+        if (offset_ + sizeof(T) <= block_->capacity()) {
+            *(T*)(block_->start() + offset_) = v;
             offset_ += sizeof(T);
             if(block_->size_ < offset_) {
                 block_->size_ = offset_;

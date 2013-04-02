@@ -26,8 +26,8 @@ namespace cascadb {
 // Metadata for block, stored inside index
 struct BlockMeta {
     uint64_t    offset;             // start offset in file
-    size_t      inflated_size;      // size before compression
-    size_t      compressed_size;    // size after compression
+    uint32_t    skeleton_size;      // size of node skeleton
+    uint32_t    total_size;         // total size in bytes
     uint16_t    crc;                // crc of block data
 };
 
@@ -50,14 +50,21 @@ public:
     // Otherwise, initialize and write SuperBlock out
     bool init(bool create = false);
 
-    // blocking read
-    Block* read(bid_t bid);
+    // Blocking read
+    // If skeleton_only is set, read node's skeleton only,
+    // otherwise the whole node is read
+    Block* read(bid_t bid, bool skeleton_only);
+
+    // Blocking read
+    // Read from a relative offset from the beginning of block
+    // and get n bytes, the area should not out of bounds
+    Block* read(bid_t bid, uint32_t offset, uint32_t size);
 
     // Initialize a read operation
     void async_read(bid_t bid, Block** block, Callback *cb);
 
     // Initiate a write operation
-    void async_write(bid_t bid, Block* block, Callback *cb);
+    void async_write(bid_t bid, Block* block, uint32_t skeleton_size, Callback *cb);
     
     // Delete block from index 
     void delete_block(bid_t bid);
@@ -147,25 +154,13 @@ protected:
 
     bool read_block(const BlockMeta& meta, Block **block);
 
+    bool read_block(const BlockMeta& meta, uint32_t offset, uint32_t size, Block **block);
+
     // Read from offset and fill buffer
     bool read_data(uint64_t offset, Slice& buffer);
 
     // Write buffer into file offset
     bool write_data(uint64_t offset, Slice buffer);
-
-    // Compress data in input_buffer and write into output_buffer,
-    // input_buffer and output_buffer are all page aligned,
-    // size before compression is set in input_size,
-    // size after compression will be set to output_size
-    bool compress_data(Slice input_buffer, size_t input_size,
-                       Slice& output_buffer, size_t& output_size);
-
-    // Uncompress data in input_buffer and write into output_buffer,
-    // input_buffer and output_buffer are all page aligned,
-    // size before uncompression is set in input_size,
-    // size after uncompression is set in output_size
-    bool uncompress_data(Slice input_buffer, size_t input_size,
-                         Slice& output_buffer, size_t output_size);
 
     // get the position to write for given size
     uint64_t get_offset(size_t size);

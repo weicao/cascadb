@@ -4,10 +4,6 @@
 
 #include <malloc.h>
 
-#ifdef HAS_SNAPPY
-#include <snappy.h>
-#endif
-
 // to get inner/leaf node information
 #include "tree/node.h"
 
@@ -62,7 +58,6 @@ bool Layout::init(bool create)
 {
     if (create) {
         // initialize and write super block out
-        superblock_->compress = options_.compress;
         superblock_->index_block_meta = NULL;
         if (!flush_superblock()) {
             LOG_ERROR("flush superblock error during create");
@@ -80,10 +75,6 @@ bool Layout::init(bool create)
         }
         if (!load_superblock()) {
             LOG_ERROR("read superblock error during init");
-            return false;
-        }
-        if (superblock_->compress != options_.compress) {
-            LOG_ERROR("compress method does not match in superblock and options");
             return false;
         }
         if (superblock_->index_block_meta) {
@@ -104,7 +95,7 @@ bool Layout::init(bool create)
     return true;
 }
 
-Block* Layout::read(bid_t bid)
+Block* Layout::read(bid_t bid, bool skeleton_only)
 {
     BlockMeta meta;
     if (!get_block_meta(bid, meta)) {
@@ -112,18 +103,48 @@ Block* Layout::read(bid_t bid)
         return NULL;
     }
 
+    uint32_t read;
+    if (skeleton_only) {
+        read = meta.skeleton_size;
+    } else {
+        read = meta.total_size;
+    }
+
     Block *block;
-    if (!read_block(meta, &block)) {
+    if (!read_block(meta, 0, read, &block)) {
         LOG_ERROR("read block error, bid " << hex << bid << dec
             << ", offset " << meta.offset
-            << ", size " << meta.compressed_size);
+            << ", size " << read);
         return NULL;
     }
 
     LOG_TRACE("read block ok,  bid " << hex << bid << dec 
-        << ", offset " << meta.offset
-        << ", compressed size " << meta.compressed_size
-        << ", inflated size " << meta.inflated_size);
+        << ", offset " << meta.offset << ", size " << read);
+    return block;
+}
+
+Block* Layout::read(bid_t bid, uint32_t offset, uint32_t size)
+{
+    BlockMeta meta;
+    if (!get_block_meta(bid, meta)) {
+        LOG_INFO("read block error, cannot find block bid " << hex << bid << dec);
+        return NULL;
+    }
+
+    assert(offset <= meta.total_size);
+    assert(offset + size <= meta.total_size);
+
+    Block *block;
+    if (!read_block(meta, offset, size, &block)) {
+        LOG_ERROR("read block error, bid " << hex << bid << dec
+            << ", offset " << (meta.offset + offset)
+            << ", size " << size);
+        return NULL;
+    }
+
+    LOG_TRACE("read block ok,  bid " << hex << bid << dec 
+        << ", offset " << (meta.offset + offset)
+        << ", size " << size)
     return block;
 }
 
@@ -136,9 +157,9 @@ void Layout::async_read(bid_t bid, Block **block, Callback *cb)
         return;
     }
 
-    Slice buffer = alloc_aligned_buffer(meta.compressed_size);
+    Slice buffer = alloc_aligned_buffer(meta.total_size);
     if (!buffer.size()) {
-        LOG_ERROR("alloc_aligned_buffer fail, size " << meta.compressed_size);
+        LOG_ERROR("alloc_aligned_buffer fail, size " << meta.total_size);
         cb->exec(false);
         return;
     }
@@ -168,19 +189,7 @@ void Layout::handle_async_read(AsyncReadReq *req, AIOStatus status)
     if (status.succ) {
         LOG_TRACE("read block bid " << hex << req->bid << dec 
             << " at offset " << req->meta.offset << " ok");
-
-        Slice inflated_data;
-
-        if (!uncompress_data(req->buffer, req->meta.compressed_size,
-                             inflated_data, req->meta.inflated_size)) {
-            assert(false);
-        }
-        *(req->block) = new Block(inflated_data, req->meta.inflated_size);
-
-        if (options_.compress != kNoCompress) {
-            free_buffer(req->buffer);
-        } // otherwise the buffer is used directly
-
+        *(req->block) = new Block(req->buffer, 0, req->meta.total_size);
         req->cb->exec(true);
     } else {
         LOG_ERROR("read block bid " << hex << req->bid << dec << " error");
@@ -191,23 +200,17 @@ void Layout::handle_async_read(AsyncReadReq *req, AIOStatus status)
     delete req;
 }
 
-void Layout::async_write(bid_t bid, Block *block, Callback *cb)
+void Layout::async_write(bid_t bid, Block *block, uint32_t skeleton_size, Callback *cb)
 {
     // Assumpt buffer inside block is aligned
-    assert(block->limit() == PAGE_ROUND_UP(block->size()));
+    assert(block->capacity() >= PAGE_ROUND_UP(block->size()));
 
     AsyncWriteReq *req = new AsyncWriteReq();
     req->bid = bid;
     req->cb = cb;
-    req->meta.inflated_size = block->size();
-
-    if (!compress_data(Slice(block->buf(), block->limit()), block->size(),
-                        req->buffer, req->meta.compressed_size)) {
-        assert(false);
-    }
-
-    // output buffer maybe larger
-    req->buffer.resize(PAGE_ROUND_UP(req->meta.compressed_size));
+    req->meta.skeleton_size = skeleton_size;
+    req->meta.total_size = block->size();
+    req->buffer = block->buffer();
     req->meta.offset = get_offset(req->buffer.size());
 
     Callback *ncb = new Callback(this, &Layout::handle_async_write, req);
@@ -231,11 +234,7 @@ void Layout::handle_async_write(AsyncWriteReq *req, AIOStatus status)
         set_block_meta(req->bid, req->meta);
     } else {
         LOG_ERROR("write block " << req->bid << " error");
-        add_hole(req->meta.offset, PAGE_ROUND_UP(req->meta.compressed_size));
-    }
-
-    if (options_.compress != kNoCompress) {
-        free_buffer(req->buffer);
+        add_hole(req->meta.offset, PAGE_ROUND_UP(req->meta.total_size));
     }
 
     req->cb->exec(status.succ);
@@ -303,7 +302,7 @@ bool Layout::load_superblock()
     }
 
     LOG_TRACE("read 1st superblock ok");
-    Block block(buffer, SUPER_BLOCK_SIZE);
+    Block block(buffer, 0, SUPER_BLOCK_SIZE);
     BlockReader reader(&block);
     if (!read_superblock(reader)) {
         LOG_ERROR("1st superblock is invalid");
@@ -330,7 +329,7 @@ bool Layout::load_2nd_superblock()
     }
 
     LOG_TRACE("read 2nd superblock ok");
-    Block block(buffer, SUPER_BLOCK_SIZE);
+    Block block(buffer, 0, SUPER_BLOCK_SIZE);
     BlockReader reader(&block);
     if (!read_superblock(reader)) {
         LOG_ERROR("2nd superblock is invalid");
@@ -351,7 +350,7 @@ bool Layout::flush_superblock()
         return false;
     }
 
-    Block block(buffer, 0);
+    Block block(buffer, 0, 0);
     BlockWriter writer(&block);
     if (!write_superblock(writer)) {
         assert(false);
@@ -406,44 +405,31 @@ bool Layout::flush_index()
 {
     size_t size = get_index_size();
 
-    Slice inflated_data = alloc_aligned_buffer(size);
-    if (!inflated_data.size()) {
+    Slice buffer = alloc_aligned_buffer(size);
+    if (!buffer.size()) {
         LOG_ERROR("alloc_aligned_buffer fail, size " << size);
         return false;
     }
 
-    Block block(inflated_data, 0);
+    Block block(buffer, 0, 0);
     BlockWriter writer(&block);
     if (!write_index(writer)) {
         assert(false);
     }
     assert(block.size() == size);
 
-    Slice compressed_data;
-    size_t compressed_size;
-    if (!compress_data(inflated_data, size,
-        compressed_data, compressed_size)) {
-        assert(false);
-    }
-
-    // buffer may be larger
-    compressed_data.resize(PAGE_ROUND_UP(compressed_size));
-    if (options_.compress != kNoCompress) {
-        free_buffer(inflated_data);
-    }
-
-    uint64_t offset = get_offset(compressed_data.size());
-    if (!write_data(offset, compressed_data)) {
+    uint64_t offset = get_offset(buffer.size());
+    if (!write_data(offset, buffer)) {
         LOG_ERROR("flush index block error");
-        add_hole(offset, PAGE_ROUND_UP(size));
-        free_buffer(compressed_data);
+        add_hole(offset, buffer.size());
+        free_buffer(buffer);
         return false;
     }
 
     LOG_TRACE("flush index block ok");
     if (superblock_->index_block_meta) {
         add_hole(superblock_->index_block_meta->offset, 
-            PAGE_ROUND_UP(superblock_->index_block_meta->compressed_size));
+            PAGE_ROUND_UP(superblock_->index_block_meta->total_size));
     } else {
         superblock_->index_block_meta = new BlockMeta();
     }
@@ -456,10 +442,9 @@ bool Layout::flush_index()
     block_index_lock.unlock();
 
     superblock_->index_block_meta->offset = offset;
-    superblock_->index_block_meta->inflated_size = size;
-    superblock_->index_block_meta->compressed_size = compressed_size;
+    superblock_->index_block_meta->total_size = size;
 
-    free_buffer(compressed_data);
+    free_buffer(buffer);
     return true;
 }
 
@@ -468,10 +453,6 @@ bool Layout::read_superblock(BlockReader& reader)
     if (!reader.readUInt64(&(superblock_->magic_number))) return false;
     if (!reader.readUInt8(&(superblock_->major_version))) return false;
     if (!reader.readUInt8(&(superblock_->minor_version))) return false;
-
-    uint8_t c;
-    if (!reader.readUInt8(&c)) return false;
-    superblock_->compress = (Compress) c;
 
     bool has_index_block_meta;
     if (!reader.readBool(&has_index_block_meta)) return false;
@@ -489,9 +470,6 @@ bool Layout::write_superblock(BlockWriter& writer)
     if (!writer.writeUInt64(superblock_->magic_number)) return false;
     if (!writer.writeUInt8(superblock_->major_version)) return false;
     if (!writer.writeUInt8(superblock_->minor_version)) return false;
-
-    uint8_t c = superblock_->compress;
-    if (!writer.writeUInt8(c)) return false;
 
     if (superblock_->index_block_meta) {
         if (!writer.writeBool(true)) return false;
@@ -546,15 +524,8 @@ bool Layout::write_index(BlockWriter& writer)
 bool Layout::read_block_meta(BlockMeta* meta, BlockReader& reader)
 {
     if (!reader.readUInt64(&(meta->offset))) return false;
-
-    uint32_t inflated_size;
-    if (!reader.readUInt32(&inflated_size)) return false;
-    meta->inflated_size = inflated_size;
-
-    uint32_t compressed_size;
-    if (!reader.readUInt32(&compressed_size)) return false;
-    meta->compressed_size = compressed_size;
-
+    if (!reader.readUInt32(&(meta->skeleton_size))) return false;
+    if (!reader.readUInt32(&(meta->total_size))) return false;
     if (!reader.readUInt16(&(meta->crc))) return false;
     return true;
 }
@@ -562,12 +533,11 @@ bool Layout::read_block_meta(BlockMeta* meta, BlockReader& reader)
 bool Layout::write_block_meta(BlockMeta* meta, BlockWriter& writer)
 {
     if (!writer.writeUInt64(meta->offset)) return false;
-    if (!writer.writeUInt32(meta->inflated_size)) return false;
-    if (!writer.writeUInt32(meta->compressed_size)) return false;
+    if (!writer.writeUInt32(meta->skeleton_size)) return false;
+    if (!writer.writeUInt32(meta->total_size)) return false;
     if (!writer.writeUInt16(meta->crc)) return false;
     return true;
 }
-
 
 bool Layout::get_block_meta(bid_t bid, BlockMeta& meta)
 {
@@ -596,7 +566,7 @@ void Layout::set_block_meta(bid_t bid, const BlockMeta& meta)
         p = it->second;
         has_hole = true;
         offset = p->offset;
-        size = PAGE_ROUND_UP(p->compressed_size);
+        size = PAGE_ROUND_UP(p->total_size);
         block_offset_index_.erase(p->offset);
     }
 
@@ -621,7 +591,7 @@ void Layout::del_block_meta(bid_t bid)
 
         block_index_.erase(it);
         offset = p->offset;
-        size = PAGE_ROUND_UP(p->compressed_size);
+        size = PAGE_ROUND_UP(p->total_size);
         block_offset_index_.erase(p->offset);
 
         delete p;
@@ -633,28 +603,26 @@ void Layout::del_block_meta(bid_t bid)
 
 bool Layout::read_block(const BlockMeta& meta, Block **block)
 {
-    Slice compressed_data = alloc_aligned_buffer(meta.compressed_size);
-    if (!compressed_data.size()) {
-        LOG_ERROR("alloc_aligned_buffer error, size " << meta.compressed_size);
+    return read_block(meta, 0, meta.total_size, block);
+}
+
+bool Layout::read_block(const BlockMeta& meta, uint32_t offset, uint32_t size, Block **block)
+{
+    uint32_t offset1 = PAGE_ROUND_DOWN(offset);
+    uint32_t size1 = offset - offset1 + size;
+
+    Slice buffer = alloc_aligned_buffer(size1);
+    if (!buffer.size()) {
+        LOG_ERROR("alloc_aligned_buffer error, size " << size1);
         return false;
     }
 
-    if (!read_data(meta.offset, compressed_data)) {
-        free_buffer(compressed_data);
+    if (!read_data(meta.offset + offset1, buffer)) {
+        free_buffer(buffer);
         return false;
     }
 
-    Slice inflated_data;
-    if (!uncompress_data(compressed_data, meta.compressed_size,
-                         inflated_data, meta.inflated_size)) {
-        assert(false);
-    }
-
-    if (options_.compress != kNoCompress) {
-        free_buffer(compressed_data);
-    } // otherwise the buffer is used directly
-
-    *block = new Block(inflated_data, meta.inflated_size);
+    *block = new Block(buffer, offset - offset1, size);
     return true;
 }
 
@@ -701,68 +669,6 @@ bool Layout::write_data(uint64_t offset, Slice buffer)
     return true;
 }
 
-bool Layout::compress_data(Slice input_buffer, size_t input_size,
-                           Slice& output_buffer, size_t& output_size)
-{
-    switch(options_.compress) {
-    case kNoCompress: {
-        output_size = input_size;
-        output_buffer = input_buffer;
-
-        return true;
-    }
-    case kSnappyCompress: {
-#ifdef HAS_SNAPPY
-        size_t max_size = snappy::MaxCompressedLength(input_size);
-        Slice buffer = alloc_aligned_buffer(max_size);
-        if (!buffer.size()) {
-            LOG_ERROR("alloc_aligned_buffer fail, size " << max_size);
-            return false;
-        }
-
-        output_buffer = buffer;
-        snappy::RawCompress(input_buffer.data(), input_size, (char *)output_buffer.data(), &output_size);
-        return true;
-#else
-        return false;
-#endif
-    }
-    default:
-        LOG_ERROR("unrecognized compress type");
-        return false;
-    }
-}
-
-bool Layout::uncompress_data(Slice input_buffer, size_t input_size,
-                             Slice& output_buffer, size_t output_size)
-{
-    switch(options_.compress) {
-    case kNoCompress: {
-        assert(input_size == output_size);
-        output_buffer = input_buffer;
-        return true;
-    }
-    case kSnappyCompress: {
-#ifdef HAS_SNAPPY
-        Slice buffer = alloc_aligned_buffer(output_size);
-        if (!snappy::RawUncompress(input_buffer.data(), input_size, (char *)buffer.data())) {
-            LOG_ERROR("snappy uncompress error");
-            free_buffer(buffer);
-            return false;
-        }
-
-        output_buffer = buffer;
-        return true;
-#else
-        return false;
-#endif
-    }
-    default:
-        LOG_ERROR("unrecognized compress type");
-        return false;
-    }
-}
-
 uint64_t Layout::get_offset(size_t size)
 {
     uint64_t offset;
@@ -786,11 +692,9 @@ uint64_t Layout::get_offset(size_t size)
 void Layout::print_index_info()
 {
     size_t inner_cnt = 0;
-    size_t inner_inflated_size = 0;
-    size_t inner_compressed_size = 0;
+    size_t inner_total_size = 0;
     size_t leaf_cnt = 0;
-    size_t leaf_inflated_size = 0;
-    size_t leaf_compressed_size = 0;
+    size_t leaf_total_size = 0;
 
     ScopedMutex block_index_lock(&block_index_mtx_);
 
@@ -798,21 +702,17 @@ void Layout::print_index_info()
         it != block_index_.end(); it++ ) {
         if (IS_LEAF(it->first)) {
             leaf_cnt ++;
-            leaf_inflated_size += it->second->inflated_size;
-            leaf_compressed_size += it->second->compressed_size;
+            leaf_total_size += it->second->total_size;
         } else {
             inner_cnt ++;
-            inner_inflated_size += it->second->inflated_size;
-            inner_compressed_size += it->second->compressed_size;
+            inner_total_size += it->second->total_size;
         }
      }
 
      LOG_INFO("inner nodes count " << inner_cnt
-        << ", total inflated size " << inner_inflated_size
-        << ", total compressed size " << inner_compressed_size << endl
+        << ", total size " << inner_total_size << endl
         << "leaf node count " << leaf_cnt
-        << ", total inflated_size " << leaf_inflated_size
-        << ", total compressed_size " << leaf_compressed_size);
+        << ", total size " << leaf_total_size);
 }
 
 void Layout::init_block_offset_index()
@@ -841,7 +741,7 @@ void Layout::init_holes()
         if (it == block_offset_index_.begin()) {
             last = SUPER_BLOCK_SIZE * 2;
         } else {
-            last = prev->second->offset + PAGE_ROUND_UP(prev->second->compressed_size);
+            last = prev->second->offset + PAGE_ROUND_UP(prev->second->total_size);
         }
 
         if (it->second->offset > last) {
@@ -855,7 +755,7 @@ void Layout::init_holes()
     // set file offset
     if (block_offset_index_.size())  {
         offset_ = block_offset_index_.rbegin()->second->offset +
-            PAGE_ROUND_UP(block_offset_index_.rbegin()->second->compressed_size);
+            PAGE_ROUND_UP(block_offset_index_.rbegin()->second->total_size);
     } else {
         offset_ = SUPER_BLOCK_SIZE * 2;
     }
@@ -988,7 +888,7 @@ Block* Layout::create(size_t size)
 {
     Slice buffer = alloc_aligned_buffer(size);
     if (buffer.size()) {
-        return new Block(buffer, 0);
+        return new Block(buffer, 0, 0);
     } else {
         return NULL;
     }
@@ -996,8 +896,7 @@ Block* Layout::create(size_t size)
 
 void Layout::destroy(Block* block)
 {
-    assert(block && block->buf());
-
-    free((char*)block->buf());
+    assert(block);
+    free_buffer(block->buffer());
     delete block;
 }

@@ -19,7 +19,7 @@ public:
     DBImpl(const std::string& name, const Options& options)
     : name_(name), options_(options),
       file_(NULL), layout_(NULL),
-      cache_(NULL), tree_(NULL), node_store_(NULL)
+      cache_(NULL), tree_(NULL)
     {
     }
     
@@ -45,7 +45,6 @@ private:
     Layout *layout_;
     Cache *cache_;
     Tree* tree_;
-    NodeStore *node_store_;
 };
 
 }

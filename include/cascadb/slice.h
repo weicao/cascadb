@@ -73,10 +73,17 @@ public:
     std::string to_string() const {
         return std::string(data_, size_);
     }
+
+    static Slice alloc(size_t size) {
+        assert(size);
+        char *buf = new char[size];
+        assert(buf);
+        return Slice(buf, size);
+    }
     
     Slice clone() const {
         assert(size_);
-        char* buf = new char[size_];
+        char *buf = new char[size_];
         assert(buf);
         memcpy(buf, data_, size_);
         return Slice(buf, size_);

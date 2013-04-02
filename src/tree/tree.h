@@ -13,8 +13,9 @@
 #include "cascadb/comparator.h"
 #include "cascadb/options.h"
 #include "sys/sys.h"
+#include "cache/cache.h"
+#include "util/compressor.h"
 #include "node.h"
-#include "node_store.h"
 
 namespace cascadb {
 
@@ -38,11 +39,14 @@ class Tree {
 public:
     Tree(const std::string& table_name,
          const Options& options,
-         NodeStore *node_store)
+         Cache *cache,
+         Layout *layout)
     : table_name_(table_name),
       options_(options),
-      node_store_(node_store),
+      cache_(cache),
+      layout_(layout),
       node_factory_(NULL),
+      compressor_(NULL),
       schema_(NULL),
       root_(NULL)
     {
@@ -66,7 +70,7 @@ private:
     
     LeafNode* new_leaf_node();
     
-    DataNode* load_node(bid_t nid);
+    DataNode* load_node(bid_t nid, bool skeleton_only);
     
     InnerNode* root() { return root_; }
     
@@ -88,15 +92,17 @@ private:
 
     Options         options_;
 
-    NodeStore       *node_store_;
+    Cache           *cache_;
+
+    Layout          *layout_;
 
     TreeNodeFactory *node_factory_;
+
+    Compressor      *compressor_;
 
     SchemaNode      *schema_;
 
     InnerNode       *root_;
-
-
 };
 
 }

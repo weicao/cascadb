@@ -196,7 +196,7 @@ void Cache::put(const std::string& tbn, bid_t nid, Node* node)
     nodes_lock_.unlock();
 }
 
-Node* Cache::get(const std::string& tbn, bid_t nid)
+Node* Cache::get(const std::string& tbn, bid_t nid, bool skeleton_only)
 {
     CacheKey key(tbn, nid);
     Node *node;
@@ -220,15 +220,14 @@ Node* Cache::get(const std::string& tbn, bid_t nid)
         evict();
     }
     
-    Block* block = tbs.layout->read(nid);
+    Block* block = tbs.layout->read(nid, skeleton_only);
     if (block == NULL) return NULL;
     
     node = tbs.factory->new_node(nid);
     BlockReader reader(block);
-    if (!node->read_from(reader)) {
+    if (!node->read_from(reader, skeleton_only)) {
         assert(false);
     }
-    assert(node->size() == block->size());
     tbs.layout->destroy(block);
     
     nodes_lock_.write_lock();
@@ -323,15 +322,19 @@ void Cache::evict()
             if (node->is_dirty()) {
                 dirty_size += size;
                 dirty_count ++;
-            } else if (node->is_flushing()) {
+            }
+
+            if (node->is_flushing()) {
                 flushing_size += size;
                 flushing_count ++;
-            } else {
+            }
+
+            // check everything again after ensure reference is 0
+            if (node->ref() == 0 && !node->is_dead() 
+                    && !node->is_dirty() && !node->is_flushing()) {
                 clean_size += size;
                 clean_count ++;
-                if (node->ref() == 0) {
-                    clean_nodes.push_back(node);
-                }
+                clean_nodes.push_back(node);
             }
         }
     }
@@ -557,15 +560,18 @@ void Cache::flush_nodes(vector<Node*>& nodes)
         }
         Layout *layout = tbs.layout;
         assert(layout);
+
+        size_t buffer_size = node->estimated_buffer_size();
        
-        Block *block = layout->create(node->size());
+        Block *block = layout->create(buffer_size);
         assert(block);
         
+        size_t skeleton_size;
         BlockWriter writer(block);
-        if (!node->write_to(writer)) {
+        if (!node->write_to(writer, skeleton_size)) {
             assert(false);
         }
-        assert(node->size() == block->size());
+        assert(buffer_size >= block->size());
         node->set_dirty(false);
 
         // unlock node
@@ -576,7 +582,7 @@ void Cache::flush_nodes(vector<Node*>& nodes)
         context->layout = layout;
         context->block =block;
         Callback *cb = new Callback(this, &Cache::write_complete, context);
-        layout->async_write(nid, block, cb);
+        layout->async_write(nid, block, skeleton_size, cb);
     }
 }
 
@@ -683,36 +689,4 @@ void Cache::debug_print(std::ostream& out)
         << clean_count << " clean nodes ("
         << clean_size << " bytes), "
         << endl;
-}
-
-CachedNodeStore::CachedNodeStore(Cache *cache, 
-                                 const std::string& table_name,
-                                 Layout *layout)
-: cache_(cache), table_name_(table_name), layout_(layout)
-{
-}
-
-CachedNodeStore::~CachedNodeStore()
-{
-    cache_->del_table(table_name_);
-}
-
-bool CachedNodeStore::init(NodeFactory *node_factory)
-{
-    return cache_->add_table(table_name_, node_factory, layout_);
-}
-    
-void CachedNodeStore::put(bid_t nid, Node* node)
-{
-    cache_->put(table_name_, nid, node);
-}
-    
-Node* CachedNodeStore::get(bid_t nid)
-{
-    return cache_->get(table_name_, nid);
-}
-
-void CachedNodeStore::flush()
-{
-    cache_->flush_table(table_name_);
 }

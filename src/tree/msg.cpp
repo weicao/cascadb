@@ -68,12 +68,7 @@ MsgBuf::~MsgBuf()
 
 void MsgBuf::write(const Msg& msg)
 {
-#ifdef FAST_VECTOR
     MsgBuf::Iterator it = container_.lower_bound(msg, KeyComp(comp_));
-#else
-    MsgBuf::Iterator it = lower_bound(container_.begin(), 
-        container_.end(), msg, KeyComp(comp_));
-#endif
     if (it == end() || it->key != msg.key) {
         container_.insert(it, msg);
         size_ += msg.size();
@@ -92,11 +87,7 @@ void MsgBuf::append(MsgBuf::Iterator first, MsgBuf::Iterator last)
     KeyComp comp(comp_);
 
     while(jt != last) {
-#ifdef FAST_VECTOR
         it = container_.lower_bound(it, jt->key, comp);
-#else
-        it = lower_bound(it, container_.end(), jt->key, comp);
-#endif
         if (it == container_.end() || it->key != jt->key) {
             // important, it maybe invalid after insertion
             it = container_.insert(it, *jt);
@@ -113,12 +104,7 @@ void MsgBuf::append(MsgBuf::Iterator first, MsgBuf::Iterator last)
 
 MsgBuf::Iterator MsgBuf::find(Slice key)
 {
-#ifdef FAST_VECTOR
     return container_.lower_bound(key, KeyComp(comp_));
-#else
-    return lower_bound(container_.begin(), container_.end(),
-                        key, KeyComp(comp_));
-#endif
 }
 
 void MsgBuf::clear()

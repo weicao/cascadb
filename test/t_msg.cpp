@@ -8,7 +8,7 @@ using namespace std;
 TEST(Msg, searialize)
 {
     char buffer[4096];
-    Block blk(buffer, 0, 4096);
+    Block blk(Slice(buffer, 4096), 0, 0);
     BlockReader reader(&blk);
     BlockWriter writer(&blk);
     
@@ -115,7 +115,7 @@ TEST(MsgBuf, find)
 TEST(MsgBuf, searialize)
 {
     char buffer[4096];
-    Block blk(buffer, 0, 4096);
+    Block blk(Slice(buffer, 4096), 0, 0);
     BlockReader reader(&blk);
     BlockWriter writer(&blk);
     

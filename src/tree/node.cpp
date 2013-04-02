@@ -16,52 +16,38 @@ using namespace std;
 using namespace cascadb;
 
 /********************************************************
-                        Pivot
+                        SchemaNode 
 *********************************************************/
 
-size_t Pivot::size()
+#define SCHEMA_NODE_SIZE 32
+
+size_t SchemaNode::size()
 {
-    return 4 + key.size() + 8 + msgbuf->size();
+    return SCHEMA_NODE_SIZE;
 }
 
-bool Pivot::read_from(BlockReader& reader)
+size_t SchemaNode::estimated_buffer_size()
 {
-    if (!reader.readSlice(key)) return false;
-    if (!reader.readUInt64(&child)) return false;
-    assert(msgbuf);
-    if (!msgbuf->read_from(reader)) return false;
+    return SCHEMA_NODE_SIZE;
+}
+
+bool SchemaNode::read_from(BlockReader& reader, bool skeleton_only)
+{
+    if (!reader.readUInt64(&root_node_id)) return false;
+    if (!reader.readUInt64(&next_inner_node_id)) return false;
+    if (!reader.readUInt64(&next_leaf_node_id)) return false;
+    if (!reader.readUInt64(&tree_depth)) return false;
+
     return true;
 }
 
-bool Pivot::write_to(BlockWriter& writer)
+bool SchemaNode::write_to(BlockWriter& writer, size_t& skeleton_size)
 {
-    if (!writer.writeSlice(key)) return false;
-    if (!writer.writeUInt64(child)) return false;
-    assert(msgbuf);
-    if (!msgbuf->write_to(writer)) return false;
-    return true;
-}
-
-/********************************************************
-                        Record
-*********************************************************/
-
-size_t Record::size()
-{
-    return 4 + key.size() + 4 + value.size();
-}
-        
-bool Record::read_from(BlockReader& reader)
-{
-    if (!reader.readSlice(key)) return false;
-    if (!reader.readSlice(value)) return false;
-    return true;
-}
-    
-bool Record::write_to(BlockWriter& writer)
-{
-    if (!writer.writeSlice(key)) return false;
-    if (!writer.writeSlice(value)) return false;
+    if (!writer.writeUInt64(root_node_id)) return false;
+    if (!writer.writeUInt64(next_inner_node_id)) return false;
+    if (!writer.writeUInt64(next_leaf_node_id)) return false;
+    if (!writer.writeUInt64(tree_depth)) return false;
+    skeleton_size = SCHEMA_NODE_SIZE;
     return true;
 }
 
@@ -95,8 +81,12 @@ bool InnerNode::write(const Msg& m)
 {
     read_lock();
 
+    if (status_ == kSkeletonLoaded) {
+        load_all_msgbuf();
+    }
+
     Slice k = m.key;
-    write_msgbuf(m, find_pivot(k));
+    insert_msgbuf(m, find_pivot(k));
     set_dirty(true);
     
     maybe_cascade();
@@ -104,8 +94,12 @@ bool InnerNode::write(const Msg& m)
 }
 
 bool InnerNode::cascade(MsgBuf *mb, InnerNode* parent){
-
     read_lock();
+
+    // lazy load
+    if (status_ == kSkeletonLoaded) {
+        load_all_msgbuf();
+    }
 
     // lock message buffer
     mb->write_lock();
@@ -121,14 +115,14 @@ bool InnerNode::cascade(MsgBuf *mb, InnerNode* parent){
             it ++;
         } else {
             if (rs != it) {
-                write_msgbuf(rs, it, i);
+                insert_msgbuf(rs, it, i);
                 rs = it;
             }
             i ++;
         }
     }
     if(rs != end) {
-        write_msgbuf(rs, end, i);
+        insert_msgbuf(rs, end, i);
     }
 
     // clear message buffer and modify parent's status
@@ -197,10 +191,14 @@ int InnerNode::find_pivot(Slice k)
 MsgBuf* InnerNode::msgbuf(int idx)
 {
     assert(idx >= 0 && (size_t)idx <= pivots_.size());
-    if (idx == 0) {
-        return first_msgbuf_;
+
+    MsgBuf **pb = (idx == 0) ? &first_msgbuf_ : &(pivots_[idx-1].msgbuf);
+    if (*pb) {
+        return *pb;
     } else {
-        return pivots_[idx-1].msgbuf;
+        assert(status_ == kSkeletonLoaded);
+        load_msgbuf(idx);
+        return *pb;
     }
 }
 
@@ -224,7 +222,7 @@ void InnerNode::set_child(int idx, bid_t c)
     }
 }
 
-void InnerNode::write_msgbuf(const Msg& m, int idx)
+void InnerNode::insert_msgbuf(const Msg& m, int idx)
 {
     MsgBuf *b = msgbuf(idx);
     assert(b);
@@ -240,7 +238,7 @@ void InnerNode::write_msgbuf(const Msg& m, int idx)
     b->unlock();
 }
 
-void InnerNode::write_msgbuf(MsgBuf::Iterator begin, 
+void InnerNode::insert_msgbuf(MsgBuf::Iterator begin, 
                              MsgBuf::Iterator end, int idx)
 {
     MsgBuf *b = msgbuf(idx);
@@ -314,7 +312,7 @@ void InnerNode::maybe_cascade()
         node = tree_->new_leaf_node();
         set_child(idx, node->nid());
     } else {
-        node = tree_->load_node(nid);
+        node = tree_->load_node(nid, false);
     }
     assert(node);
     node->cascade(b, this);
@@ -335,12 +333,17 @@ void InnerNode::add_pivot(Slice key, bid_t nid, std::vector<DataNode*>& path)
 {
     assert(path.back() == this);
 
+    if (status_ == kSkeletonLoaded) {
+        load_all_msgbuf();
+    }
+
     vector<Pivot>::iterator it = std::lower_bound(pivots_.begin(), 
         pivots_.end(), key, KeyComp(tree_->options_.comparator));
     MsgBuf* mb = new MsgBuf(tree_->options_.comparator);
     pivots_.insert(it, Pivot(key.clone(), nid, mb));
     pivots_sz_ += pivot_size(key);
     msgbufsz_ += mb->size();
+    set_dirty(true);
     
     if (pivots_.size() + 1 > tree_->options_.inner_node_children_number) {
         split(path);
@@ -387,7 +390,6 @@ void InnerNode::split(std::vector<DataNode*>& path)
     msgcnt_ -= msgcnt1;
     msgbufsz_ -= msgbufsz1;
     
-    set_dirty(true);
     ni->set_dirty(true);
     ni->dec_ref();
 
@@ -428,6 +430,10 @@ void InnerNode::rm_pivot(bid_t nid, std::vector<DataNode*>& path)
     // todo free memory of pivot key
 
     assert(path.back() == this);
+
+    if (status_ == kSkeletonLoaded) {
+        load_all_msgbuf();
+    }
 
     if (first_child_ == nid) {
         /// @todo this is true only for single thread, fix me
@@ -529,7 +535,7 @@ bool InnerNode::find(Slice key, Slice& value, InnerNode *parent)
     }
     
     // find in child
-    DataNode* ch = tree_->load_node(chidx);
+    DataNode* ch = tree_->load_node(chidx, true);
     assert(ch);
     ret = ch->find(key, value, this);
     ch->dec_ref();
@@ -539,7 +545,7 @@ bool InnerNode::find(Slice key, Slice& value, InnerNode *parent)
 void InnerNode::lock_path(Slice key, std::vector<DataNode*>& path)
 {
     int idx = find_pivot(key);
-    DataNode* ch = tree_->load_node(child(idx));
+    DataNode* ch = tree_->load_node(child(idx), false);
     assert(ch);
     ch->write_lock();
     path.push_back(ch);
@@ -548,96 +554,377 @@ void InnerNode::lock_path(Slice key, std::vector<DataNode*>& path)
 
 size_t InnerNode::pivot_size(Slice key)
 {
-    // 4 bytes for key size, 8 bytes for child nid size, and 1 byte for flag
-    return 4 + key.size() + 8 + 1;
+    return 4 + key.size() + // key
+                        8 + // child nid size
+                        4 + // msgbuf offset
+                        4 + // msgbuf length
+                        4;  // msgbuf uncompressed length
 }
 
 size_t InnerNode::size()
 {
     size_t sz = 0;
-    sz += 1; // bottom
-    sz += 9; // first child nid and msgbuf flag
-    sz += 4; // pivots number
-    // for (size_t i = 0; i < pivots_.size(); i++) {
-    //     sz += (4 + pivots_[i].key.size()); // pivot key
-    //     sz += 9; // pivot child nid and msgbuf flag
-    // }
+    sz += 1 + 4 + (8 + 4 + 4 + 4);
     sz += pivots_sz_;
     sz += msgbufsz_;
     return sz;
 }
 
-bool InnerNode::read_from(BlockReader& reader)
+size_t InnerNode::estimated_buffer_size()
 {
-    bool flag;
-    if (!reader.readBool(&bottom_)) return false;
-    if (!reader.readUInt64(&first_child_)) return false;
-    if (!reader.readBool(&flag)) return false;
-    if (flag) {
-        first_msgbuf_ = new MsgBuf(tree_->options_.comparator);
-        if (!first_msgbuf_->read_from(reader)) return false;
-        msgcnt_ += first_msgbuf_->count();
-        msgbufsz_ += first_msgbuf_->size();
+    size_t sz = 0;
+    sz += 1 + 4 + (8 + 4 + 4 + 4) + pivots_sz_;
+
+    if (tree_->compressor_) {
+        sz += tree_->compressor_->max_compressed_length(first_msgbuf_->size());
+        for (size_t i = 0; i < pivots_.size(); i++) {
+            sz += tree_->compressor_->max_compressed_length(pivots_[i].msgbuf->size());
+        }
+    } else {
+        sz += first_msgbuf_->size();
+        for (size_t i = 0; i < pivots_.size(); i++) {
+            sz += pivots_[i].msgbuf->size();
+        }
     }
+    return sz;
+}
+
+bool InnerNode::read_from(BlockReader& reader, bool skeleton_only)
+{
+    if (!reader.readBool(&bottom_)) return false;
+
     uint32_t pn;
     if (!reader.readUInt32(&pn)) return false;
+
     pivots_.resize(pn);
+
+    if (!reader.readUInt64(&first_child_)) return false;
+    if (!reader.readUInt32(&first_msgbuf_offset_)) return false;
+    if (!reader.readUInt32(&first_msgbuf_length_)) return false;
+    if (!reader.readUInt32(&first_msgbuf_uncompressed_length_)) return false;
+
     for (size_t i = 0; i < pn; i++) {
         if (!reader.readSlice(pivots_[i].key)) return false;
         pivots_sz_ += pivot_size(pivots_[i].key);
-        if (!reader.readUInt64(&pivots_[i].child)) return false;
-        if (!reader.readBool(&flag)) return false;
-        if (flag) {
+        if (!reader.readUInt64(&(pivots_[i].child))) return false;
+        pivots_[i].msgbuf = NULL; // unloaded
+        if (!reader.readUInt32(&(pivots_[i].offset))) return false;
+        if (!reader.readUInt32(&(pivots_[i].length))) return false;
+        if (!reader.readUInt32(&(pivots_[i].uncompressed_length))) return false;
+    }
+
+    if (!skeleton_only) {
+        if (!load_all_msgbuf(reader)) return false;
+    } else {
+        status_ = kSkeletonLoaded;
+    }
+
+    return true;
+}
+
+bool InnerNode::load_msgbuf(int idx)
+{
+    uint32_t offset;
+    uint32_t length;
+    uint32_t uncompressed_length;
+    if (idx == 0) {
+        offset = first_msgbuf_offset_;
+        length = first_msgbuf_length_;
+        uncompressed_length = first_msgbuf_uncompressed_length_;
+    } else {
+        offset = pivots_[idx-1].offset;
+        length = pivots_[idx-1].length;
+        uncompressed_length = pivots_[idx-1].uncompressed_length;
+    }
+
+    Block* block = tree_->layout_->read(nid_, offset, length);
+    if (block == NULL) {
+        LOG_ERROR("read msgbuf from layout error " << " nid " << nid_ << ", idx " << idx
+            << ", offset " << offset << ", length " << length);
+        return false;
+    }
+
+    BlockReader reader(block);
+
+    Slice buffer;
+    if (tree_->compressor_) {
+        buffer = Slice::alloc(uncompressed_length);
+    }
+
+    MsgBuf *b = new MsgBuf(tree_->options_.comparator);
+    assert(b);
+
+    if (!read_msgbuf(reader, length, uncompressed_length, b, buffer)) {
+        LOG_ERROR("read_msgbuf error " << " nid " << nid_ << ", idx " << idx);
+        delete b;
+        if (buffer.size()) {
+            buffer.destroy();
+        }
+        tree_->layout_->destroy(block);
+        return false;
+    }
+
+    if (buffer.size()) {
+        buffer.destroy();
+    }
+
+    // lazy load, upgrade lock to write lock
+    // TODO: write a upgradable rwlock
+    unlock();
+    write_lock();
+
+    MsgBuf **pb = (idx == 0) ? &first_msgbuf_ : &(pivots_[idx-1].msgbuf);
+    if (*pb == NULL) {
+        *pb = b;
+        msgcnt_ += b->count();
+        msgbufsz_ += b->size();
+    } else {
+        delete b;
+    }
+
+    unlock();
+    read_lock();
+
+    tree_->layout_->destroy(block);
+    return true;
+}
+
+bool InnerNode::load_all_msgbuf()
+{
+    Block* block = tree_->layout_->read(nid_, false);
+    if (block == NULL) {
+        LOG_ERROR("load all msgbuf error, cannot read " << " nid " << nid_);
+        return false;
+    }
+
+    BlockReader reader(block);
+
+    // lazy load, upgrade lock to write lock
+    // TODO: write a upgradable rwlock
+    unlock();
+    write_lock();
+
+    bool ret = load_all_msgbuf(reader);
+
+    unlock();
+    read_lock();
+
+    tree_->layout_->destroy(block);
+    return ret;
+}
+
+bool InnerNode::load_all_msgbuf(BlockReader& reader)
+{
+    Slice buffer;
+    if (tree_->compressor_) {
+        size_t buffer_length = first_msgbuf_uncompressed_length_;
+        for (size_t i = 0; i < pivots_.size(); i++) {
+            if (buffer_length < pivots_[i].uncompressed_length) {
+                buffer_length = pivots_[i].uncompressed_length;
+            }
+        }
+
+        buffer = Slice::alloc(buffer_length);
+    }
+
+    if (first_msgbuf_ == NULL) {
+        reader.seek(first_msgbuf_offset_);
+        first_msgbuf_ = new MsgBuf(tree_->options_.comparator);
+        if (!read_msgbuf(reader, first_msgbuf_length_,
+                         first_msgbuf_uncompressed_length_, 
+                         first_msgbuf_, buffer)) {
+            if (buffer.size()) {
+                buffer.destroy();
+            }
+            return false;
+        }
+        msgcnt_ += first_msgbuf_->count();
+        msgbufsz_ += first_msgbuf_->size();
+    }
+
+    for (size_t i = 0; i < pivots_.size(); i++) {
+        if (pivots_[i].msgbuf == NULL) {
+            reader.seek(pivots_[i].offset);
             pivots_[i].msgbuf = new MsgBuf(tree_->options_.comparator);
-            if (!pivots_[i].msgbuf->read_from(reader)) return false;
+            if (!read_msgbuf(reader, pivots_[i].length,
+                             pivots_[i].uncompressed_length,
+                             pivots_[i].msgbuf, buffer)) {
+                if (buffer.size()) {
+                    buffer.destroy();
+                }
+                return false;
+            }
             msgcnt_ += pivots_[i].msgbuf->count();
             msgbufsz_ += pivots_[i].msgbuf->size();
         }
     }
+
+    if (buffer.size()) {
+        buffer.destroy();
+    }
+
+    status_ = kFullLoaded;
     return true;
 }
 
-bool InnerNode::write_to(BlockWriter& writer)
+bool InnerNode::read_msgbuf(BlockReader& reader,
+                            size_t compressed_length, 
+                            size_t uncompressed_length,
+                            MsgBuf *mb, Slice buffer)
 {
-    if (!writer.writeBool(bottom_)) return false;
-    if (!writer.writeUInt64(first_child_)) return false;
-    if (first_msgbuf_) {
-        if (!writer.writeBool(true)) return false;
-        if (!first_msgbuf_->write_to(writer)) return false;
+    if (tree_->compressor_) {
+        assert(compressed_length <= reader.remain());
+        assert(uncompressed_length <= buffer.size());
+
+        // 1. uncompress
+        if (!tree_->compressor_->uncompress(reader.addr(),
+            compressed_length, (char *)buffer.data())) {
+            return false;
+        }
+        reader.skip(compressed_length);
+
+        // 2. deserialize
+        Block block(buffer, 0, uncompressed_length);
+        BlockReader rr(&block);
+        return mb->read_from(rr);
     } else {
-        if (!writer.writeBool(false)) return false;
+        return mb->read_from(reader);
     }
-    
+}
+
+bool InnerNode::write_to(BlockWriter& writer, size_t& skeleton_size)
+{
+    // get length of skeleton and reserve space for skeleton
+    size_t skeleton_offset = writer.pos();
+    size_t skeleton_length = 1 + 4 + 8 + 4 + 4 + 4;
+    for (size_t i = 0; i < pivots_.size(); i++) {
+        skeleton_length += pivot_size(pivots_[i].key);
+    }
+    if (!writer.skip(skeleton_length)) return false;
+
+    // prepare buffer if compression is enabled
+    Slice buffer;
+    if (tree_->compressor_) {
+        // get buffer length to serialize msgbuf
+        size_t buffer_length = first_msgbuf_->size();
+        for (size_t i = 0; i < pivots_.size(); i++) {
+            if (pivots_[i].msgbuf->size() > buffer_length)
+                buffer_length = pivots_[i].msgbuf->size();
+        }
+
+        buffer = Slice::alloc(buffer_length);
+    }
+
+    // write the first msgbuf
+    first_msgbuf_offset_ = writer.pos();
+    if (!write_msgbuf(writer, first_msgbuf_, buffer)) return false;
+    first_msgbuf_length_ = writer.pos() - first_msgbuf_offset_;
+    first_msgbuf_uncompressed_length_ = first_msgbuf_->size();
+
+    // write rest msgbufs
+    for (size_t i = 0; i < pivots_.size(); i++) {
+        pivots_[i].offset = writer.pos();
+        if (!write_msgbuf(writer, pivots_[i].msgbuf, buffer)) return false;
+        pivots_[i].length = writer.pos() - pivots_[i].offset;
+        pivots_[i].uncompressed_length = pivots_[i].msgbuf->size();
+    }
+
+    if (buffer.size()) {
+        buffer.destroy();
+    }
+
+    size_t last_offset = writer.pos();
+
+    // seek to the head and write index
+    writer.seek(skeleton_offset);
+    if (!writer.writeBool(bottom_)) return false;
     if (!writer.writeUInt32(pivots_.size())) return false;
+
+    if (!writer.writeUInt64(first_child_)) return false;
+    if (!writer.writeUInt32(first_msgbuf_offset_)) return false;
+    if (!writer.writeUInt32(first_msgbuf_length_)) return false;
+    if (!writer.writeUInt32(first_msgbuf_uncompressed_length_)) return false;
+
     for (size_t i = 0; i < pivots_.size(); i++) {
         if (!writer.writeSlice(pivots_[i].key)) return false;
         if (!writer.writeUInt64(pivots_[i].child)) return false;
-        if (pivots_[i].msgbuf) {
-            if (!writer.writeBool(true)) return false;
-            if (!pivots_[i].msgbuf->write_to(writer)) return false;
-        } else {
-            if (!writer.writeBool(false)) return false;
-        }
+        if (!writer.writeUInt32(pivots_[i].offset)) return false;
+        if (!writer.writeUInt32(pivots_[i].length)) return false;
+        if (!writer.writeUInt32(pivots_[i].uncompressed_length)) return false;
     }
+
+    writer.seek(last_offset);
+    skeleton_size = skeleton_length;
     return true;
+}
+
+bool InnerNode::write_msgbuf(BlockWriter& writer, MsgBuf *mb, Slice buffer)
+{
+    if (tree_->compressor_) {
+        // 1. write to buffer
+        Block block(buffer, 0, 0);
+        BlockWriter wr(&block);
+        if (!mb->write_to(wr)) return false;
+
+        // 2. compress
+        assert(tree_->compressor_->max_compressed_length(block.size()) <=
+            writer.remain());
+
+        size_t compressed_length;
+        if (!tree_->compressor_->compress(buffer.data(), block.size(),
+             writer.addr(), &compressed_length)) {
+            LOG_ERROR("compress msgbuf error, nid " << nid_);
+            return false;
+        }
+
+        // 3. skip
+        writer.skip(compressed_length);
+
+        return true;
+    } else {
+        return mb->write_to(writer);
+    }
 }
 
 /********************************************************
                         LeafNode
 *********************************************************/
 
+LeafNode::LeafNode(const std::string& table_name, bid_t nid, Tree *tree)
+: DataNode(table_name, nid, tree),
+  balancing_(false),
+  left_sibling_(NID_NIL),
+  right_sibling_(NID_NIL),
+  records_(tree->options_.leaf_node_bucket_size)
+{
+    assert(nid >= NID_LEAF_START);
+}
+
 LeafNode::~LeafNode()
 {
-    for (size_t i = 0; i < records_.size(); i++ ) {
-        records_[i].key.destroy();
-        records_[i].value.destroy();
+    for (size_t i = 0; i < buckets_info_.size(); i++ ) {
+        buckets_info_[i].key.destroy();
     }
-    records_.clear();
+
+    for (size_t i = 0; i < records_.buckets_number(); i++ ) {
+        RecordBucket *bucket = records_.bucket(i);
+        if (bucket) {
+            for (RecordBucket::iterator it = bucket->begin();
+                it != bucket->end(); it++) {
+                it->key.destroy();
+                it->value.destroy();
+            }
+        }
+    }
 }
 
 bool LeafNode::cascade(MsgBuf *mb, InnerNode* parent)
 {
     write_lock();
+
+    if (status_ == kSkeletonLoaded) {
+        load_all_buckets();
+    }
 
     // lock message buffer from parent
     mb->write_lock();
@@ -647,12 +934,12 @@ bool LeafNode::cascade(MsgBuf *mb, InnerNode* parent)
     Slice anchor = mb->begin()->key.clone();
 
     // merge message buffer into leaf
-    vector<Record> res;
-    res.reserve(records_.size() + mb->count());
+    RecordBuckets res(tree_->options_.leaf_node_bucket_size);
+
     MsgBuf::Iterator it = mb->begin();
-    vector<Record>::iterator jt = records_.begin();
-    while ( it != mb->end() && jt != records_.end()) {
-        int n = tree_->options_.comparator->compare(it->key, jt->key);
+    RecordBuckets::Iterator jt = records_.get_iterator();
+    while (it != mb->end() && jt.valid()) {
+        int n = tree_->options_.comparator->compare(it->key, jt.record().key);
         if (n < 0) {
             if (it->type == Put) {
                 res.push_back(to_record(*it));
@@ -662,18 +949,17 @@ bool LeafNode::cascade(MsgBuf *mb, InnerNode* parent)
             }
             it ++;
         } else if (n > 0) {
-            res.push_back(*jt);
-
-            jt ++;
+            res.push_back(jt.record());
+            jt.next();
         } else {
             if (it->type == Put) {
                 res.push_back(to_record(*it));
             }
             // old record is deleted
-            jt->key.destroy();
-            jt->value.destroy();
             it ++;
-            jt ++;
+            jt.record().key.destroy();
+            jt.record().value.destroy();
+            jt.next();
         }
     }
     for (; it != mb->end(); it++) {
@@ -681,12 +967,13 @@ bool LeafNode::cascade(MsgBuf *mb, InnerNode* parent)
             res.push_back(to_record(*it));
         }
     }
-    for (; jt != records_.end(); jt++) {
-        res.push_back(*jt);
+    while(jt.valid()) {
+        res.push_back(jt.record());
+        jt.next();
     }
     records_.swap(res);
-    res.clear();
-    recsz_ = calc_recsz();
+
+    refresh_buckets_info();
     set_dirty(true);
 
     // clear message buffer
@@ -699,12 +986,12 @@ bool LeafNode::cascade(MsgBuf *mb, InnerNode* parent)
     // crab walk
     parent->unlock();
 
-    if (records_.size() > 1 &&
-        (records_.size() > tree_->options_.leaf_node_record_count ||
-         size() > tree_->options_.leaf_node_page_size)) {
-        split(anchor);
-    } else if(records_.size() == 0) {
+    if (records_.size() == 0) {
         merge(anchor);
+    } else if (records_.size() > 1 && (records_.size() > 
+        tree_->options_.leaf_node_record_count || size() > 
+        tree_->options_.leaf_node_page_size)) {
+        split(anchor);
     } else {
         unlock();
     }
@@ -718,6 +1005,7 @@ Record LeafNode::to_record(const Msg& m)
     assert(m.type == Put);
     return Record(m.key, m.value);
 }
+
 
 void LeafNode::split(Slice anchor)
 {
@@ -747,21 +1035,16 @@ void LeafNode::split(Slice anchor)
         }
         return;
     }
-    
-    // select a pivot
-    size_t n = records_.size()/2;
-    Slice k = records_[n].key;
-    
+   
     // create new leaf
     LeafNode *nl = tree_->new_leaf_node();
     assert(nl);
-    nl->write_lock();
 
     // set siblings
     nl->left_sibling_ = nid_;
     nl->right_sibling_ = right_sibling_;
     if(right_sibling_ >= NID_LEAF_START) {
-        LeafNode *rl = (LeafNode*)tree_->load_node(right_sibling_);
+        LeafNode *rl = (LeafNode*)tree_->load_node(right_sibling_, false);
         assert(rl);
         rl->write_lock();
         rl->left_sibling_ = nl->nid_;
@@ -771,19 +1054,12 @@ void LeafNode::split(Slice anchor)
     }
     right_sibling_ = nl->nid_;
 
-    // move records
-    nl->records_.resize(records_.size() - n);
-    std::copy(records_.begin() + n, records_.end(), nl->records_.begin());
-    records_.resize(n);
+    Slice k = records_.split(nl->records_);
+    refresh_buckets_info();
+    nl->refresh_buckets_info();
 
-    // set size
-    nl->recsz_ = nl->calc_recsz();
-    recsz_ -= nl->recsz_;
-    
     set_dirty(true);
     nl->set_dirty(true);
-
-    nl->unlock();
     nl->dec_ref();
 
     balancing_ = false;
@@ -795,16 +1071,6 @@ void LeafNode::split(Slice anchor)
     InnerNode *parent = (InnerNode*) path.back();
     assert(parent);
     parent->add_pivot(k, nl->nid_, path);
-}
-
-size_t LeafNode::calc_recsz()
-{
-    size_t sz = 0;
-    for (vector<Record>::iterator it = records_.begin(); 
-        it != records_.end(); it ++ ) {
-        sz += it->size();
-    }
-    return sz;
 }
 
 void LeafNode::merge(Slice anchor)
@@ -834,7 +1100,7 @@ void LeafNode::merge(Slice anchor)
     }
     
     if (left_sibling_ >= NID_LEAF_START) {
-        LeafNode *ll = (LeafNode*)tree_->load_node(left_sibling_);
+        LeafNode *ll = (LeafNode*)tree_->load_node(left_sibling_, false);
         assert(ll);
         ll->write_lock();
         ll->right_sibling_ = right_sibling_;
@@ -843,7 +1109,7 @@ void LeafNode::merge(Slice anchor)
         ll->dec_ref();
     }
     if (right_sibling_ >= NID_LEAF_START) {
-        LeafNode *rl = (LeafNode*)tree_->load_node(right_sibling_);
+        LeafNode *rl = (LeafNode*)tree_->load_node(right_sibling_, false);
         assert(rl);
         rl->write_lock();
         rl->left_sibling_ = left_sibling_;
@@ -866,15 +1132,38 @@ void LeafNode::merge(Slice anchor)
 
 bool LeafNode::find(Slice key, Slice& value, InnerNode *parent) 
 {
-    bool ret = false;
     assert(parent);
     read_lock();
 
     parent->unlock();
 
+    size_t idx = 0;
+    for (; idx < buckets_info_.size(); idx ++) {
+        if (tree_->options_.comparator->compare(key, buckets_info_[idx].key) < 0) {
+            break;
+        }
+    }
+
+    if (idx == 0) {
+        unlock();
+        return false;
+    }
+
+    RecordBucket *bucket = records_.bucket(idx - 1);
+    if (bucket == NULL) {
+        if (!load_bucket(idx - 1)) {
+            LOG_ERROR("laod bucket error nid " << nid_ << ", bucket " << (idx-1));
+            unlock();
+            return false;
+        }
+        bucket = records_.bucket(idx - 1);
+        assert(bucket);
+    } 
+
+    bool ret = false;
     vector<Record>::iterator it = lower_bound(
-        records_.begin(), records_.end(), key, KeyComp(tree_->options_.comparator));
-    if (it != records_.end() && it->key == key) {
+        bucket->begin(), bucket->end(), key, KeyComp(tree_->options_.comparator));
+    if (it != bucket->end() && it->key == key) {
         ret = true;
         value = it->value.clone();
     }
@@ -885,61 +1174,355 @@ bool LeafNode::find(Slice key, Slice& value, InnerNode *parent)
 
 void LeafNode::lock_path(Slice key, std::vector<DataNode*>& path)
 {
-    return;
 }
 
 size_t LeafNode::size()
 {
-    return 8*2 + 4 + recsz_;
+    return 8 + 8 + buckets_info_size_ + records_.length();
 }
 
-bool LeafNode::read_from(BlockReader& reader)
+size_t LeafNode::estimated_buffer_size()
+{
+    size_t length = 8 + 8 + buckets_info_size_;
+    if (tree_->compressor_) { 
+        for (size_t i = 0; i < records_.buckets_number(); i++) {
+            length += tree_->compressor_->max_compressed_length(records_.bucket_length(i));
+        }
+    } else {
+        length += records_.length();
+    }
+    return length;
+}
+
+bool LeafNode::read_from(BlockReader& reader, bool skeleton_only)
 {
     if (!reader.readUInt64(&left_sibling_)) return false;
     if (!reader.readUInt64(&right_sibling_)) return false;
-    
-    uint32_t n;
-    if (!reader.readUInt32(&n)) return false;
-    records_.resize(n);
-    for (size_t i = 0; i < n; i++) {
-        if (!records_[i].read_from(reader)) return false;
+
+    if (!read_buckets_info(reader)) {
+        LOG_ERROR("read buckets info error, nid " << nid_);
+        return false;
     }
-    recsz_ = calc_recsz();
+
+    if (!skeleton_only) {
+        if (!load_all_buckets(reader)) {
+            LOG_ERROR("read all records bucket error, nid " << nid_);
+            return false;
+        }
+    }
     return true;
 }
 
-bool LeafNode::write_to(BlockWriter& writer)
+bool LeafNode::write_to(BlockWriter& writer, size_t& skeleton_size)
 {
+    assert(status_ == kNew || status_ == kFullLoaded);
+
+    size_t skeleton_pos = writer.pos();
+    skeleton_size = 8 + 8 + buckets_info_size_;
+    if (!writer.skip(skeleton_size)) return false;
+
+    Slice buffer;
+    if (tree_->compressor_) {
+        size_t buffer_length = 0;
+        for (size_t i = 0; i < records_.buckets_number(); i++) {
+            if (buffer_length < records_.bucket_length(i)) {
+                buffer_length = records_.bucket_length(i);
+            }
+        }
+        buffer = Slice::alloc(buffer_length);
+    }
+
+    assert(records_.buckets_number() == buckets_info_.size());
+    for (size_t i = 0; i < records_.buckets_number(); i++ ) {
+        RecordBucket* bucket = records_.bucket(i);
+
+        buckets_info_[i].offset = writer.pos();
+        if (!write_bucket(writer, bucket, buffer)) {
+            if (buffer.size()) {
+                buffer.destroy();
+            }
+            return false;
+        }
+        buckets_info_[i].length = writer.pos() - buckets_info_[i].offset;
+        buckets_info_[i].uncompressed_length = records_.bucket_length(i);
+    }
+    size_t last_pos = writer.pos();
+
+    if (buffer.size()) {
+        buffer.destroy();
+    }
+
+    writer.seek(skeleton_pos);
     if (!writer.writeUInt64(left_sibling_)) return false;
     if (!writer.writeUInt64(right_sibling_)) return false;
-    if (!writer.writeUInt32(records_.size())) return false;
-    for (size_t i = 0; i < records_.size(); i++) {
-        if (!records_[i].write_to(writer)) return false;
-    } 
+
+    if (!write_buckets_info(writer)) {
+        LOG_ERROR("write buckets info error, nid " << nid_);
+        return false;
+    }
+    writer.seek(last_pos);
     return true;
 }
 
-size_t SchemaNode::size()
+bool LeafNode::write_bucket(BlockWriter& writer, RecordBucket *bucket, Slice buffer)
 {
-    return 32;
+    if (tree_->compressor_) {
+        // 1. write to buffer
+        Block block(buffer, 0, 0);
+        BlockWriter wr(&block);
+        if (!write_bucket(wr, bucket)) return false;
+
+        // 2. compress
+        assert(tree_->compressor_->max_compressed_length(block.size()) <=
+            writer.remain());
+
+        size_t compressed_length;
+        if (!tree_->compressor_->compress(buffer.data(), block.size(),
+             writer.addr(), &compressed_length)) {
+            LOG_ERROR("compress msgbuf error, nid " << nid_);
+            return false;
+        }
+
+        // 3. skip
+        writer.skip(compressed_length);
+
+        return true;
+    } else {
+        return write_bucket(writer, bucket);
+    }
 }
 
-bool SchemaNode::read_from(BlockReader& reader)
+bool LeafNode::write_bucket(BlockWriter& writer, RecordBucket *bucket)
 {
-    if (!reader.readUInt64(&root_node_id)) return false;
-    if (!reader.readUInt64(&next_inner_node_id)) return false;
-    if (!reader.readUInt64(&next_leaf_node_id)) return false;
-    if (!reader.readUInt64(&tree_depth)) return false;
-
+    if (!writer.writeUInt32(bucket->size())) return false;
+    for (size_t j = 0; j < bucket->size(); j++) {
+        if (!(*bucket)[j].write_to(writer)) return false;
+    }
     return true;
 }
 
-bool SchemaNode::write_to(BlockWriter& writer)
+void LeafNode::refresh_buckets_info()
 {
-    if (!writer.writeUInt64(root_node_id)) return false;
-    if (!writer.writeUInt64(next_inner_node_id)) return false;
-    if (!writer.writeUInt64(next_leaf_node_id)) return false;
-    if (!writer.writeUInt64(tree_depth)) return false;
+    // clean old info
+    for (size_t i = 0; i < buckets_info_.size(); i++) {
+        buckets_info_[i].key.destroy();
+    }
+
+    buckets_info_size_ = 4;
+    buckets_info_.resize(records_.buckets_number());
+    for (size_t i = 0; i < records_.buckets_number(); i++) {
+        RecordBucket *bucket = records_.bucket(i);
+        assert(bucket);
+        assert(bucket->size());
+
+        buckets_info_[i].key = bucket->front().key.clone();
+        buckets_info_[i].offset = 0;
+        buckets_info_[i].length = 0;
+        buckets_info_[i].uncompressed_length = 0;
+
+        buckets_info_size_ += 4 + buckets_info_[i].key.size() + 4 + 4 + 4;
+    }
+}
+
+bool LeafNode::read_buckets_info(BlockReader& reader)
+{
+    uint32_t nbuckets;
+    if (!reader.readUInt32(&nbuckets)) return false;
+    buckets_info_.resize(nbuckets);
+
+    buckets_info_size_ = 4;
+    for (size_t i = 0; i < nbuckets; i++ ) {
+        if (!reader.readSlice(buckets_info_[i].key)) return false;
+        if (!reader.readUInt32(&(buckets_info_[i].offset))) return false;
+        if (!reader.readUInt32(&(buckets_info_[i].length))) return false;
+        if (!reader.readUInt32(&(buckets_info_[i].uncompressed_length))) return false;
+        buckets_info_size_ += 4 + buckets_info_[i].key.size() + 4 + 4 + 4;
+    }
+
+    // init buckets number
+    records_.set_buckets_number(nbuckets);
+
+    status_ = kSkeletonLoaded;
+    return true;
+}
+
+bool LeafNode::write_buckets_info(BlockWriter& writer)
+{
+    if (!writer.writeUInt32(buckets_info_.size())) return false;
+    for (size_t i = 0; i < buckets_info_.size(); i++ ) {
+        if (!writer.writeSlice(buckets_info_[i].key)) return false;
+        if (!writer.writeUInt32(buckets_info_[i].offset)) return false;
+        if (!writer.writeUInt32(buckets_info_[i].length)) return false;
+        if (!writer.writeUInt32(buckets_info_[i].uncompressed_length)) return false;
+    }
+    return true;
+}
+
+bool LeafNode::load_bucket(size_t idx)
+{
+    assert(status_ != kFullLoaded);
+    assert(idx < buckets_info_.size());
+    assert(records_.bucket(idx) == NULL);
+
+    uint32_t offset = buckets_info_[idx].offset;
+    uint32_t length = buckets_info_[idx].length;
+    uint32_t uncompressed_length = buckets_info_[idx].uncompressed_length;
+
+    Block* block = tree_->layout_->read(nid_, offset, length);
+    if (block == NULL) {
+        LOG_ERROR("read bucket error " << " nid " << nid_ << ", idx " << idx
+            << ", offset " << offset << ", length " << length);
+        return false;
+    }
+
+    BlockReader reader(block);
+
+    RecordBucket *bucket = new RecordBucket();
+    if (bucket == NULL) {
+        tree_->layout_->destroy(block);
+        return false;
+    }
+
+    Slice buffer;
+    if (tree_->compressor_) {
+        buffer = Slice::alloc(uncompressed_length);
+    }
+
+    if (!read_bucket(reader, length, uncompressed_length, bucket, buffer)) {
+        if (buffer.size()) {
+            buffer.destroy();
+        }
+        delete bucket;
+        tree_->layout_->destroy(block);
+        return false;
+    }
+
+    if (buffer.size()) {
+        buffer.destroy();
+    }
+
+    // this operation must be inside read lock
+
+    // lazy load, upgrade lock to write lock
+    // TODO: write a upgradable rwlock
+    unlock();
+    write_lock();
+    if (records_.bucket(idx) == NULL) {
+        records_.set_bucket(idx, bucket);
+    } else {
+        // it's possible another read thread loading 
+        // the same block at the same time
+        delete bucket;
+    }
+    unlock();
+    read_lock();
+
+    tree_->layout_->destroy(block);
+    return true;
+}
+
+bool LeafNode::load_all_buckets()
+{
+    // skeleton has already been loaded
+    assert(status_ == kSkeletonLoaded);
+
+    Block* block = tree_->layout_->read(nid_, false);
+    if (block == NULL) {
+        LOG_ERROR("read node error " << " nid " << nid_);
+        return false;
+    }
+
+    // this operation must be inside write lock
+    BlockReader reader(block);
+    if (!load_all_buckets(reader)) {
+        tree_->layout_->destroy(block);
+        return false;
+    }
+
+    tree_->layout_->destroy(block);
+    return true;
+}
+
+bool LeafNode::load_all_buckets(BlockReader& reader)
+{
+    Slice buffer;
+    if (tree_->compressor_) {
+        size_t buffer_length = 0;
+        for (size_t i = 0; i < buckets_info_.size(); i++ ) {
+            if (buffer_length < buckets_info_[i].uncompressed_length) {
+                buffer_length = buckets_info_[i].uncompressed_length;
+            }
+        }
+        buffer = Slice::alloc(buffer_length);
+    }
+
+    bool ret = true;
+    for (size_t i = 0; i < buckets_info_.size(); i++) {
+        reader.seek(buckets_info_[i].offset);
+
+        RecordBucket *bucket = new RecordBucket();
+        if (bucket == NULL) {
+            ret = false;
+            break;
+        }
+
+        if (!read_bucket(reader, buckets_info_[i].length, 
+                         buckets_info_[i].uncompressed_length,
+                         bucket, buffer)) {
+            ret = false;
+            delete bucket;
+            break;
+        }
+
+        records_.set_bucket(i, bucket);
+    }
+
+    if (buffer.size()) {
+        buffer.destroy();
+    }
+
+    status_ = kFullLoaded;
+    return ret;
+}
+
+bool LeafNode::read_bucket(BlockReader& reader, 
+                           size_t compressed_length,
+                           size_t uncompressed_length,
+                           RecordBucket *bucket, Slice buffer)
+{
+    if (tree_->compressor_) {
+        // 1. uncompress
+        assert(compressed_length <= reader.remain());
+        assert(uncompressed_length <= buffer.size());
+
+        // 1. uncompress
+        if (!tree_->compressor_->uncompress(reader.addr(),
+            compressed_length, (char *)buffer.data())) {
+            return false;
+        }
+        reader.skip(compressed_length);
+
+        // 2. deserialize
+        Block block(buffer, 0, uncompressed_length);
+        BlockReader rr(&block);
+        return read_bucket(rr, bucket);
+    } else {
+        return read_bucket(reader, bucket);
+    }
+}
+
+bool LeafNode::read_bucket(BlockReader& reader,
+                           RecordBucket *bucket)
+{
+    uint32_t nrecords;
+    if (!reader.readUInt32(&nrecords)) return false;
+
+    bucket->resize(nrecords);
+    for (size_t i = 0; i < nrecords; i++) {
+        if (!(*bucket)[i].read_from(reader)) {
+            return false;
+        }
+    }
 
     return true;
 }

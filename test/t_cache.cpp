@@ -19,22 +19,29 @@ public:
 
     void lock_path(Slice key, std::vector<Node*>& path) {}
     
-    size_t size() {
+    size_t size()
+    {
         return 4096;
     }
+
+    size_t estimated_buffer_size()
+    {
+        return size();
+    }
     
-    bool read_from(BlockReader& reader) {
+    bool read_from(BlockReader& reader, bool skeleton_only) {
         EXPECT_TRUE(reader.readUInt64(&data));
         Slice s;
         EXPECT_TRUE(reader.readSlice(s));
         return true;
     }
 
-    bool write_to(BlockWriter& writer) {
+    bool write_to(BlockWriter& writer, size_t& skeleton_size) {
         EXPECT_TRUE(writer.writeUInt64(nid_));
         char buf[4084] = {0};
         Slice s(buf, sizeof(buf));
         EXPECT_TRUE(writer.writeSlice(s));
+        skeleton_size = size();
         return true;
     }
 
@@ -84,7 +91,7 @@ TEST(Cache, read_and_write) {
 
     cache->add_table("t1", factory, layout);
     for (int i = 0; i < 1000; i++) {
-        Node *node = cache->get("t1", i);
+        Node *node = cache->get("t1", i, false);
         EXPECT_TRUE(node != NULL);
         EXPECT_EQ((uint64_t)i, ((FakeNode*)node)->data);
         node->dec_ref();

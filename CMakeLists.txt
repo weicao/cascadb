@@ -26,7 +26,7 @@ IF("${isSystemDir}" STREQUAL "-1")
    SET(CMAKE_INSTALL_RPATH "${CMAKE_INSTALL_PREFIX}/lib")
 ENDIF("${isSystemDir}" STREQUAL "-1")
 
-add_definitions("-g  -Wall")
+add_definitions("-g -O2 -Wall")
 
 include_directories(
 ${PROJECT_SOURCE_DIR}/include

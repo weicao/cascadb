@@ -20,7 +20,11 @@ Tree::~Tree()
         schema_->dec_ref();
     }
 
+    cache_->del_table(table_name_);
+
     delete node_factory_;
+
+    delete compressor_;
 }
 
 bool Tree::init()
@@ -30,13 +34,21 @@ bool Tree::init()
         return false;
     }
 
+    switch(options_.compress) {
+    case kNoCompress:
+        break;
+    case kSnappyCompress:
+        compressor_ = new SnappyCompressor();
+        break;
+    }
+
     node_factory_ = new TreeNodeFactory(this);
-    if (!node_store_->init(node_factory_)) {
-        LOG_ERROR("init node store error");
+    if (!cache_->add_table(table_name_, node_factory_, layout_))  {
+        LOG_ERROR("init table in cache error");
         return false;
     }
 
-    schema_ = (SchemaNode*) node_store_->get(NID_SCHEMA);
+    schema_ = (SchemaNode*) cache_->get(table_name_, NID_SCHEMA, false);
     if (schema_ == NULL) {
         LOG_INFO("schema node doesn't exist, init empty db");
         schema_ = new SchemaNode(table_name_);
@@ -45,7 +57,7 @@ bool Tree::init()
         schema_->next_leaf_node_id = NID_LEAF_START;
         schema_->tree_depth = 2;
         schema_->set_dirty(true);
-        node_store_->put(NID_SCHEMA, schema_);
+        cache_->put(table_name_, NID_SCHEMA, schema_);
     }
 
     if (schema_->root_node_id == NID_NIL) {
@@ -59,7 +71,7 @@ bool Tree::init()
         schema_->unlock();
     } else {
         LOG_INFO("load root node nid " << hex << schema_->root_node_id << dec);
-        root_ = (InnerNode*)load_node(schema_->root_node_id);
+        root_ = (InnerNode*)load_node(schema_->root_node_id, false);
     }
 
     assert(root_);
@@ -106,7 +118,7 @@ InnerNode* Tree::new_inner_node()
     InnerNode* node = (InnerNode *)node_factory_->new_node(nid);
     assert(node);
 
-    node_store_->put(nid, node);
+    cache_->put(table_name_, nid, node);
     return node;
 }
 
@@ -120,14 +132,14 @@ LeafNode* Tree::new_leaf_node()
     LeafNode* node = (LeafNode *)node_factory_->new_node(nid);
     assert(node);
 
-    node_store_->put(nid, node);
+    cache_->put(table_name_, nid, node);
     return node;
 }
 
-DataNode* Tree::load_node(bid_t nid)
+DataNode* Tree::load_node(bid_t nid, bool skeleton_only)
 {
     assert(nid != NID_NIL && nid != NID_SCHEMA);
-    return (DataNode*) node_store_->get(nid);
+    return (DataNode*) cache_->get(table_name_, nid, skeleton_only);
 }
 
 void Tree::pileup(InnerNode *root)
@@ -180,11 +192,10 @@ Node* Tree::TreeNodeFactory::new_node(bid_t nid)
     } else {
         DataNode *node;
         if (nid >= NID_LEAF_START) {
-            node = new LeafNode(tree_->table_name_, nid);
+            node = new LeafNode(tree_->table_name_, nid, tree_);
         } else {
-            node = new InnerNode(tree_->table_name_, nid);
+            node = new InnerNode(tree_->table_name_, nid, tree_);
         }
-        node->set_tree(tree_);
         return node;
     }
 }
