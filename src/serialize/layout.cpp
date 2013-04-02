@@ -274,11 +274,14 @@ bool Layout::flush()
 
 bool Layout::flush_meta()
 {
+    size_t fly_hole_size;
+
+    fly_hole_size = fly_hole_list_.size();
     if (!flush_index()) return false;
     if (!flush_superblock()) return false;
 
     // add fly holes to hole list
-    flush_fly_holes();
+    flush_fly_holes(fly_hole_size);
 
     return true;
 }
@@ -405,12 +408,14 @@ bool Layout::load_index()
     return true;
 }
 
-void Layout::flush_fly_holes()
+void Layout::flush_fly_holes(size_t fly_hole_size)
 {
+    size_t i;
     HoleListType::iterator it;
 
     ScopedMutex fly_hole_list_lock(&fly_hole_list_mtx_);
-    for (it = fly_hole_list_.begin(); it != fly_hole_list_.end();) {
+    it = fly_hole_list_.begin();
+    for (i = 0; i < fly_hole_size; i++) {
         add_hole(it->offset, it->size);
         it = fly_hole_list_.erase(it);
     }

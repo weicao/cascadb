@@ -96,7 +96,7 @@ protected:
     bool flush_index();
 
     // Add fly holes to hole list
-    void flush_fly_holes();
+    void flush_fly_holes(size_t fly_hole_size);
 
     // Deserialize superblock from buffer
     bool read_superblock(BlockReader& reader);
