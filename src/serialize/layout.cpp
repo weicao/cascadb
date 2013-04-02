@@ -276,7 +276,10 @@ bool Layout::flush_meta()
 {
     size_t fly_hole_size;
 
+    ScopedMutex lock(&mtx_);
     fly_hole_size = fly_hole_list_.size();
+    lock.unlock();
+
     if (!flush_index()) return false;
     if (!flush_superblock()) return false;
 
@@ -411,13 +414,13 @@ bool Layout::load_index()
 void Layout::flush_fly_holes(size_t fly_hole_size)
 {
     size_t i;
-    HoleListType::iterator it;
+    Hole flyhole;
 
     ScopedMutex fly_hole_list_lock(&fly_hole_list_mtx_);
-    it = fly_hole_list_.begin();
     for (i = 0; i < fly_hole_size; i++) {
-        add_hole(it->offset, it->size);
-        it = fly_hole_list_.erase(it);
+        flyhole = fly_hole_list_.front();
+        add_hole(flyhole.offset, flyhole.size);
+        fly_hole_list_.pop_front();
     }
 }
 
