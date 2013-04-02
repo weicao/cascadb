@@ -208,8 +208,6 @@ TEST_F(LayoutTest, update)
 
     ClearWriteBufs();
 
-    uint64_t len1 = GetLength();
-
     OpenLayout(opts, false);
     Write();    // update all records
     CloseLayout();
@@ -220,6 +218,13 @@ TEST_F(LayoutTest, update)
 
     ClearWriteBufs();
 
+    uint64_t len1 = GetLength();
+
+    OpenLayout(opts, false);
+    Write();    // update all records
+    CloseLayout();
+
     uint64_t len2 = GetLength();
+
     EXPECT_TRUE(len2 > len1 * 0.9 && len2 < len1 * 1.1); // fragment collection should works
 }
