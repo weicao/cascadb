@@ -95,6 +95,9 @@ protected:
     // Serialize index into the index block and write it out
     bool flush_index();
 
+    // Add fly holes to hole list
+    void flush_fly_holes(size_t fly_hole_size);
+
     // Deserialize superblock from buffer
     bool read_superblock(BlockReader& reader);
 
@@ -178,6 +181,8 @@ protected:
 
     void add_hole(uint64_t offset, size_t size);
 
+    void add_fly_hole(uint64_t offset, size_t size);
+
     bool get_hole(size_t size, uint64_t& offset);
 
     Slice alloc_aligned_buffer(size_t size);
@@ -208,6 +213,7 @@ private:
     BlockOffsetIndexType                block_offset_index_;
 
     Mutex                               hole_list_mtx_;
+    Mutex                               fly_hole_list_mtx_;
 
     // A hole is generated when modify a block, the space taken up
     // before modification by the block becomes a hole
@@ -219,6 +225,7 @@ private:
     // A chain of holes in file
     typedef std::deque<Hole>            HoleListType;
     HoleListType                        hole_list_;
+    HoleListType                        fly_hole_list_;
 
     // the rest are statistics information
     size_t                              fly_writes_;    // todo atomic
