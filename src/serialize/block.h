@@ -27,7 +27,7 @@ public:
         assert(start_ + size_ <= buf_.size());
     }
     
-    Slice buffer() {return buf_;}
+    Slice& buffer() {return buf_;}
 
     size_t size() {return size_;}
 

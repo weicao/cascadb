@@ -187,8 +187,14 @@ void Cache::put(const std::string& tbn, bid_t nid, Node* node)
         assert(false);
     }
 
-    while (must_evict()) {
-        evict();
+    if (must_evict()) {
+        while (true) {
+            evict();
+            if (!must_evict()) {
+                break;
+            }
+            usleep(1000); // give up 1 millisecond
+        }
     }
 
     nodes_lock_.write_lock();
@@ -218,8 +224,14 @@ Node* Cache::get(const std::string& tbn, bid_t nid, bool skeleton_only)
     }
     nodes_lock_.unlock();
 
-    while (must_evict()) {
-        evict();
+    if (must_evict()) {
+        while (true) {
+            evict();
+            if (!must_evict()) {
+                break;
+            }
+            usleep(1000); // give up 1 millisecond
+        }
     }
     
     Block* block = tbs.layout->read(nid, skeleton_only);
@@ -574,9 +586,8 @@ void Cache::flush_nodes(vector<Node*>& nodes)
         Layout *layout = tbs.layout;
         assert(layout);
 
-        size_t buffer_size = node->estimated_buffer_size();
-       
-        Block *block = layout->create(buffer_size);
+        size_t estimated_buffer_size = node->estimated_buffer_size();
+        Block *block = layout->create(estimated_buffer_size);
         assert(block);
         
         size_t skeleton_size;
@@ -584,7 +595,8 @@ void Cache::flush_nodes(vector<Node*>& nodes)
         if (!node->write_to(writer, skeleton_size)) {
             assert(false);
         }
-        assert(buffer_size >= block->size());
+        assert(estimated_buffer_size >= block->size());
+        block->buffer().resize(PAGE_ROUND_UP(block->size()));
         node->set_dirty(false);
 
         // unlock node
@@ -609,6 +621,7 @@ void Cache::flush_nodes(vector<Node*>& nodes)
 
         // 1 minute
         if (interval_us(tbs.last_checkpoint_time, current) >= 60 * 1000000) {
+            LOG_INFO("make checkpoint at table " << *it);
             tbs.layout->flush_meta();
             tbs.layout->truncate();
             update_last_checkpoint_time(*it, current);

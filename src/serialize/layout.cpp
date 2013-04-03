@@ -203,7 +203,7 @@ void Layout::handle_async_read(AsyncReadReq *req, AIOStatus status)
 void Layout::async_write(bid_t bid, Block *block, uint32_t skeleton_size, Callback *cb)
 {
     // Assumpt buffer inside block is aligned
-    assert(block->capacity() >= PAGE_ROUND_UP(block->size()));
+    assert(block->capacity() == PAGE_ROUND_UP(block->size()));
 
     AsyncWriteReq *req = new AsyncWriteReq();
     req->bid = bid;
