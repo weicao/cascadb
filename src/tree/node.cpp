@@ -895,6 +895,7 @@ LeafNode::LeafNode(const std::string& table_name, bid_t nid, Tree *tree)
   balancing_(false),
   left_sibling_(NID_NIL),
   right_sibling_(NID_NIL),
+  buckets_info_size_(0),
   records_(tree->options_.leaf_node_bucket_size)
 {
     assert(nid >= NID_LEAF_START);
