@@ -309,6 +309,9 @@ public:
       bottom_(false),
       first_child_(NID_NIL),
       first_msgbuf_(NULL),
+      first_msgbuf_offset_(0),
+      first_msgbuf_length_(0),
+      first_msgbuf_uncompressed_length_(0),
       pivots_sz_(0),
       msgcnt_(0), 
       msgbufsz_(0)

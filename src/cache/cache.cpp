@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <sstream>
+#include <set>
 
 #include "util/logger.h"
 #include "cache.h"
@@ -78,6 +79,7 @@ bool Cache::add_table(const std::string& tbn, NodeFactory *factory, Layout *layo
     TableSettings tbs;
     tbs.factory = factory;
     tbs.layout = layout;
+    tbs.last_checkpoint_time = now();
 
     tables_[tbn] = tbs;
     tables_lock_.unlock();
@@ -256,6 +258,16 @@ bool Cache::get_table_settings(const std::string& tbn, TableSettings& tbs)
     }
     tables_lock_.unlock();
     return false;
+}
+
+void Cache::update_last_checkpoint_time(const std::string& tbn, Time t)
+{
+    tables_lock_.write_lock();
+    map<string, TableSettings>::iterator it = tables_.find(tbn);
+    if (it != tables_.end()) {
+        it->second.last_checkpoint_time = t;
+    }
+    tables_lock_.unlock();
 }
 
 bool Cache::must_evict()
@@ -547,6 +559,7 @@ void Cache::write_back()
 void Cache::flush_nodes(vector<Node*>& nodes)
 {
     LOG_TRACE("flush " << nodes.size() << " nodes");
+    set<string> tables;
 
     for (size_t i = 0 ; i < nodes.size(); i++) {
         Node* node = nodes[i];
@@ -583,6 +596,23 @@ void Cache::flush_nodes(vector<Node*>& nodes)
         context->block =block;
         Callback *cb = new Callback(this, &Cache::write_complete, context);
         layout->async_write(nid, block, skeleton_size, cb);
+
+        tables.insert(node->table_name());
+    }
+
+    Time current = now();
+    for (set<string>::iterator it = tables.begin(); it != tables.end(); it++) {
+        TableSettings tbs;
+        if (!get_table_settings(*it, tbs)) {
+            assert(false);
+        }
+
+        // 1 minute
+        if (interval_us(tbs.last_checkpoint_time, current) >= 60 * 1000000) {
+            tbs.layout->flush_meta();
+            tbs.layout->truncate();
+            update_last_checkpoint_time(*it, current);
+        }
     }
 }
 

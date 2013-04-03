@@ -63,9 +63,12 @@ protected:
     struct TableSettings {
         NodeFactory     *factory;
         Layout          *layout;
+        Time            last_checkpoint_time;
     };
 
     bool get_table_settings(const std::string& tbn, TableSettings& tbs);
+
+    void update_last_checkpoint_time(const std::string& tbn, Time t);
 
     bool must_evict();
 
