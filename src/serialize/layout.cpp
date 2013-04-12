@@ -10,6 +10,7 @@
 #include "serialize/layout.h"
 #include "util/logger.h"
 #include "util/bits.h"
+#include "util/crc16.h"
 
 using namespace std;
 using namespace cascadb;
@@ -113,13 +114,38 @@ Block* Layout::read(bid_t bid, bool skeleton_only)
     Block *block;
     if (!read_block(meta, 0, read, &block)) {
         LOG_ERROR("read block error, bid " << hex << bid << dec
-            << ", offset " << meta.offset
-            << ", size " << read);
+                  << ", offset " << meta.offset
+                  << ", size " << read
+                  << ", crc " << meta.crc);
         return NULL;
     }
 
+    uint16_t expected_crc;
+    uint16_t actual_crc;
+
+    if (skeleton_only) {
+	expected_crc = meta.skeleton_crc;
+	actual_crc = crc16(block->buffer().data(), meta.skeleton_size);
+    } else {
+	expected_crc = meta.crc;
+	// here buffer().size is aligned, not meta.total_size
+	actual_crc = crc16(block->buffer().data(), block->buffer().size());
+    }
+
+    if (expected_crc != actual_crc && expected_crc != 0) {
+	LOG_ERROR("crc error, bid " << hex << bid << dec
+		<< ", offset " << meta.offset
+		<< ", expected_crc " << expected_crc
+		<< ", actual_crc " << actual_crc
+		<< ", skeleton_only " << skeleton_only);
+
+	destroy(block);
+	return NULL;
+    }
+
     LOG_TRACE("read block ok,  bid " << hex << bid << dec 
-        << ", offset " << meta.offset << ", size " << read);
+              << ", offset " << meta.offset << ", size " << read
+              << ", crc " << meta.crc);
     return block;
 }
 
@@ -137,14 +163,15 @@ Block* Layout::read(bid_t bid, uint32_t offset, uint32_t size)
     Block *block;
     if (!read_block(meta, offset, size, &block)) {
         LOG_ERROR("read block error, bid " << hex << bid << dec
-            << ", offset " << (meta.offset + offset)
-            << ", size " << size);
+                  << ", offset " << (meta.offset + offset)
+                  << ", size " << size
+                  << ", crc " << meta.crc);
         return NULL;
     }
 
     LOG_TRACE("read block ok,  bid " << hex << bid << dec 
-        << ", offset " << (meta.offset + offset)
-        << ", size " << size)
+              << ", offset " << (meta.offset + offset)
+              << ", size " << size);
     return block;
 }
 
@@ -188,21 +215,33 @@ void Layout::handle_async_read(AsyncReadReq *req, AIOStatus status)
 
     if (status.succ) {
         LOG_TRACE("read block bid " << hex << req->bid << dec 
-            << " at offset " << req->meta.offset << " ok");
+                  << " at offset " << req->meta.offset << " ok");
+
+        uint16_t crc;
+
         *(req->block) = new Block(req->buffer, 0, req->meta.total_size);
-        req->cb->exec(true);
+        crc = crc16(req->buffer.data(), req->buffer.size());
+
+        if (crc == req->meta.crc) {
+            req->cb->exec(true);
+        } else {
+            LOG_ERROR("read block crc" << hex << req->bid << dec << req->meta.crc << " error");
+            free_buffer(req->buffer);
+            req->cb->exec(false);
+        }
     } else {
-        LOG_ERROR("read block bid " << hex << req->bid << dec << " error");
+        LOG_ERROR("read block bid " << hex << req->bid << dec << req->meta.crc << " error");
         free_buffer(req->buffer);
         req->cb->exec(false);
     }
+
     delete req->cb;
     delete req;
 }
 
 void Layout::async_write(bid_t bid, Block *block, uint32_t skeleton_size, Callback *cb)
 {
-    // Assumpt buffer inside block is aligned
+    // assumpt buffer inside block is aligned
     assert(block->capacity() == PAGE_ROUND_UP(block->size()));
 
     AsyncWriteReq *req = new AsyncWriteReq();
@@ -212,6 +251,8 @@ void Layout::async_write(bid_t bid, Block *block, uint32_t skeleton_size, Callba
     req->meta.total_size = block->size();
     req->buffer = block->buffer();
     req->meta.offset = get_offset(req->buffer.size());
+    req->meta.crc = crc16(req->buffer.data(), req->buffer.size());
+    req->meta.skeleton_crc = crc16(block->start(), skeleton_size);
 
     Callback *ncb = new Callback(this, &Layout::handle_async_write, req);
 
@@ -473,7 +514,7 @@ bool Layout::flush_index()
 
 bool Layout::read_superblock(BlockReader& reader)
 {
-    if (!reader.readUInt64(&(superblock_->magic_number))) return false;
+    if (!reader.readUInt64(&(superblock_->magic_number0))) return false;
     if (!reader.readUInt8(&(superblock_->major_version))) return false;
     if (!reader.readUInt8(&(superblock_->minor_version))) return false;
 
@@ -484,13 +525,19 @@ bool Layout::read_superblock(BlockReader& reader)
         if (!read_block_meta(superblock_->index_block_meta, reader)) return false;
     }
 
-    if (!reader.readUInt16(&(superblock_->crc))) return false;
+    if (!reader.readUInt64(&(superblock_->magic_number1))) return false;
+    if (superblock_->magic_number0 != SUPER_BLOCK_MAGIC_NUM ||
+            superblock_->magic_number0 != superblock_->magic_number1) {
+         LOG_ERROR("read superblock " "magic_num0:"<< superblock_->magic_number0 
+                  << ", magic_num1:" <<  superblock_->magic_number1);
+         return false;
+    }
     return true;
 }
 
 bool Layout::write_superblock(BlockWriter& writer)
 {
-    if (!writer.writeUInt64(superblock_->magic_number)) return false;
+    if (!writer.writeUInt64(superblock_->magic_number0)) return false;
     if (!writer.writeUInt8(superblock_->major_version)) return false;
     if (!writer.writeUInt8(superblock_->minor_version)) return false;
 
@@ -501,7 +548,7 @@ bool Layout::write_superblock(BlockWriter& writer)
         if (!writer.writeBool(false)) return false;
     }
 
-    if (!writer.writeUInt16(superblock_->crc)) return false;
+    if (!writer.writeUInt64(superblock_->magic_number1)) return false;
     return true;
 }
 
