@@ -98,7 +98,7 @@ TEST(Tree, bootstrap)
     n1->put("a", "2");
     n1->put("b", "2");
     n1->put("bb", "1");
-    EXPECT_EQ(92U, n1->size());
+    EXPECT_EQ(96U, n1->size());
 
     n1->put("e", "2");
     
@@ -129,7 +129,7 @@ TEST(Tree, bootstrap)
     CHK_REC(l3->records_[0], "bb", "1");
     CHK_REC(l3->records_[1], "c", "1");
     CHK_REC(l3->records_[2], "d", "1");
-    EXPECT_EQ(59U, n1->size());
+    EXPECT_EQ(63U, n1->size());
     
     // node#2
     EXPECT_EQ(n3->pivots_.size(), 1U);
@@ -141,7 +141,7 @@ TEST(Tree, bootstrap)
     CHK_MSG(n2->first_msgbuf_->get(0),  Put, "e", "2");
     EXPECT_EQ(l2->nid_, n2->first_child_);
     EXPECT_EQ(0U, n2->pivots_.size());
-    EXPECT_EQ(40U, n2->size());
+    EXPECT_EQ(42U, n2->size());
     
     n3->put("abc", "1");
     n3->put("bb", "2");

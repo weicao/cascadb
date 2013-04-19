@@ -605,7 +605,7 @@ void Cache::flush_nodes(vector<Node*>& nodes)
         WriteCompleteContext *context = new WriteCompleteContext();
         context->node = node;
         context->layout = layout;
-        context->block =block;
+        context->block = block;
         Callback *cb = new Callback(this, &Cache::write_complete, context);
         layout->async_write(nid, block, skeleton_size, cb);
 
