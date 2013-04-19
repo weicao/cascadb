@@ -29,6 +29,7 @@ struct BlockMeta {
     uint32_t    skeleton_size;      // size of node skeleton
     uint32_t    total_size;         // total size in bytes
     uint16_t    crc;                // crc of block data
+    uint16_t    skeleton_crc;       // crc of skeleton data
 };
 
 // Storage layout, read blocks from file and write blocks into file
