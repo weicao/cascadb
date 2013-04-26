@@ -178,7 +178,7 @@ public:
     bool writeUInt16(uint16_t v) { return writeInt(v); }
     bool writeUInt32(uint32_t v) { return writeInt(v); }
     bool writeUInt64(uint64_t v) { return writeInt(v); }
-    bool writeSlice(Slice &s);
+    bool writeSlice(const Slice &s);
 
 protected:
     template<typename T>

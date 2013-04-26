@@ -13,6 +13,7 @@ namespace cascadb {
 class Comparator {
 public:
     virtual int compare(const Slice & s1, const Slice & s2) const = 0;
+    virtual ~Comparator(){}
 };
 
 class LexicalComparator : public Comparator {

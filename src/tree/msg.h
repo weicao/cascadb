@@ -129,6 +129,9 @@ public:
     bool read_from(BlockReader& reader);
     
     bool write_to(BlockWriter& writer);
+
+    // Get the bloom bitsets
+    void  get_filter(std::string* filter);
     
 private:
     Comparator          *comp_;
