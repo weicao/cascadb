@@ -21,7 +21,7 @@
 
 namespace cascadb {
 
-#define BLOCK_META_SIZE (64 + 32 + 32 + 16) / 8
+#define BLOCK_META_SIZE (64 + 32 + 32 + 16 + 16) / 8
 
 // Metadata for block, stored inside index
 struct BlockMeta {

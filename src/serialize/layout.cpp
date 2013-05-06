@@ -597,6 +597,7 @@ bool Layout::read_block_meta(BlockMeta* meta, BlockReader& reader)
     if (!reader.readUInt32(&(meta->skeleton_size))) return false;
     if (!reader.readUInt32(&(meta->total_size))) return false;
     if (!reader.readUInt16(&(meta->crc))) return false;
+    if (!reader.readUInt16(&(meta->skeleton_crc))) return false;
     return true;
 }
 
@@ -606,6 +607,7 @@ bool Layout::write_block_meta(BlockMeta* meta, BlockWriter& writer)
     if (!writer.writeUInt32(meta->skeleton_size)) return false;
     if (!writer.writeUInt32(meta->total_size)) return false;
     if (!writer.writeUInt16(meta->crc)) return false;
+    if (!writer.writeUInt16(meta->skeleton_crc)) return false;
     return true;
 }
 

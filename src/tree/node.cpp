@@ -12,6 +12,7 @@
 #include "keycomp.h"
 #include "util/logger.h"
 #include "util/crc16.h"
+#include "util/bloom.h"
 
 using namespace std;
 using namespace cascadb;
@@ -199,6 +200,24 @@ MsgBuf* InnerNode::msgbuf(int idx)
     } else {
         assert(status_ == kSkeletonLoaded);
         load_msgbuf(idx);
+        return *pb;
+    }
+}
+
+MsgBuf* InnerNode::msgbuf(int idx, Slice& key)
+{
+    assert(idx >= 0 && (size_t)idx <= pivots_.size());
+
+    Slice *filter = (idx == 0) ? &first_filter_ : &pivots_[idx-1].filter;
+    MsgBuf **pb = (idx == 0) ? &first_msgbuf_ : &(pivots_[idx-1].msgbuf);
+    if (*pb) {
+        return *pb;
+    } else {
+        assert(status_ == kSkeletonLoaded);
+        // i am not in this msgbuf, don't to load msgbuf
+       if (bloom_matches(key, *filter))
+            load_msgbuf(idx);
+
         return *pb;
     }
 }
@@ -511,22 +530,24 @@ bool InnerNode::find(Slice key, Slice& value, InnerNode *parent)
     }
 
     int idx = find_pivot(key);
-    MsgBuf* b = msgbuf(idx);
-    assert(b);
 
-    b->read_lock(); 
-    MsgBuf::Iterator it = b->find(key);
-    if (it != b->end() && it->key == key ) {
-        if (it->type == Put) {
-            value = it->value.clone();
-            ret = true;
+    MsgBuf* b = msgbuf(idx, key);
+    // if b is NULL, means rejected by bloom filter
+    if (b) {
+        b->read_lock(); 
+        MsgBuf::Iterator it = b->find(key);
+        if (it != b->end() && it->key == key ) {
+            if (it->type == Put) {
+                value = it->value.clone();
+                ret = true;
+            }
+            // otherwise deleted
+            b->unlock();
+            unlock();
+            return ret;
         }
-        // otherwise deleted
         b->unlock();
-        unlock();
-        return ret;
     }
-    b->unlock();
 
     bid_t chidx = child(idx);
     if (chidx == NID_NIL) {
@@ -563,6 +584,12 @@ size_t InnerNode::pivot_size(Slice key)
                         2;// msgbuf crc
 }
 
+size_t InnerNode::bloom_size(int n)
+{
+    return 4 + cascadb::bloom_size(n); //bloom sizes
+}
+
+
 size_t InnerNode::size()
 {
     size_t sz = 0;
@@ -575,17 +602,22 @@ size_t InnerNode::size()
 size_t InnerNode::estimated_buffer_size()
 {
     size_t sz = 0;
-    sz += 1 + 4 + (8 + 4 + 4 + 4 + 2) + pivots_sz_;
+    sz += 1 + 4 + (8 + 4 + 4 + 4 + 2);
+    // first msgbuf bloom bitsets
+    sz += bloom_size(first_msgbuf_->count());
+    sz += pivots_sz_;
 
     if (tree_->compressor_) {
         sz += tree_->compressor_->max_compressed_length(first_msgbuf_->size());
         for (size_t i = 0; i < pivots_.size(); i++) {
             sz += tree_->compressor_->max_compressed_length(pivots_[i].msgbuf->size());
+            sz += bloom_size(pivots_[i].msgbuf->count());
         }
     } else {
         sz += first_msgbuf_->size();
         for (size_t i = 0; i < pivots_.size(); i++) {
             sz += pivots_[i].msgbuf->size();
+            sz += bloom_size(pivots_[i].msgbuf->count());
         }
     }
     return sz;
@@ -605,16 +637,19 @@ bool InnerNode::read_from(BlockReader& reader, bool skeleton_only)
     if (!reader.readUInt32(&first_msgbuf_length_)) return false;
     if (!reader.readUInt32(&first_msgbuf_uncompressed_length_)) return false;
     if (!reader.readUInt16(&first_msgbuf_crc_)) return false;
+    if (!reader.readSlice(first_filter_)) return false;
 
     for (size_t i = 0; i < pn; i++) {
         if (!reader.readSlice(pivots_[i].key)) return false;
         pivots_sz_ += pivot_size(pivots_[i].key);
+
         if (!reader.readUInt64(&(pivots_[i].child))) return false;
         pivots_[i].msgbuf = NULL; // unloaded
         if (!reader.readUInt32(&(pivots_[i].offset))) return false;
         if (!reader.readUInt32(&(pivots_[i].length))) return false;
         if (!reader.readUInt32(&(pivots_[i].uncompressed_length))) return false;
         if (!reader.readUInt16(&(pivots_[i].crc))) return false;
+        if (!reader.readSlice(pivots_[i].filter)) return false;
     }
 
     if (!skeleton_only) {
@@ -816,9 +851,12 @@ bool InnerNode::write_to(BlockWriter& writer, size_t& skeleton_size)
 {
     // get length of skeleton and reserve space for skeleton
     size_t skeleton_offset = writer.pos();
-    size_t skeleton_length = 1 + 4 + 8 + 4 + 4 + 4 + 2;
+    size_t skeleton_length = 1 + 4 + 8 + 4 + 4 + 4 + 2 +
+        bloom_size(first_msgbuf_->count());
+
     for (size_t i = 0; i < pivots_.size(); i++) {
         skeleton_length += pivot_size(pivots_[i].key);
+        skeleton_length += bloom_size(pivots_[i].msgbuf->count());
     }
     if (!writer.skip(skeleton_length)) return false;
 
@@ -862,6 +900,8 @@ bool InnerNode::write_to(BlockWriter& writer, size_t& skeleton_size)
 
     // seek to the head and write index
     writer.seek(skeleton_offset);
+
+
     if (!writer.writeBool(bottom_)) return false;
     if (!writer.writeUInt32(pivots_.size())) return false;
 
@@ -871,6 +911,13 @@ bool InnerNode::write_to(BlockWriter& writer, size_t& skeleton_size)
     if (!writer.writeUInt32(first_msgbuf_uncompressed_length_)) return false;
     if (!writer.writeUInt16(first_msgbuf_crc_)) return false;
 
+    // first msgbuf bloom filter
+    std::string filter;
+    first_msgbuf_->get_filter(&filter);
+    first_filter_ = Slice(filter);
+    if (!writer.writeSlice(first_filter_)) return false;
+    filter.clear();
+
     for (size_t i = 0; i < pivots_.size(); i++) {
         if (!writer.writeSlice(pivots_[i].key)) return false;
         if (!writer.writeUInt64(pivots_[i].child)) return false;
@@ -878,6 +925,11 @@ bool InnerNode::write_to(BlockWriter& writer, size_t& skeleton_size)
         if (!writer.writeUInt32(pivots_[i].length)) return false;
         if (!writer.writeUInt32(pivots_[i].uncompressed_length)) return false;
         if (!writer.writeUInt16(pivots_[i].crc)) return false;
+
+	// get the bloom filter bitsets
+        pivots_[i].msgbuf->get_filter(&filter);
+        if (!writer.writeSlice(Slice(filter))) return false;
+        filter.clear();
     }
 
     writer.seek(last_offset);
