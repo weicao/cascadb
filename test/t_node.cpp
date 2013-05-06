@@ -257,6 +257,13 @@ TEST(InnerNode, serialize)
     EXPECT_TRUE(n2.pivots_[0].msgbuf != NULL);
     EXPECT_EQ(0U, n2.pivots_[0].msgbuf->count());
 
+
+
+    size_t n = 13;
+    //here is must same with util/bloom.cpp
+    size_t size = 4 + ((13 * 12 + 7) / 8 + 1);
+    EXPECT_EQ(size, n1.bloom_size(n));
+
     delete tree;
     delete cache;
     delete layout;

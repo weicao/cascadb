@@ -20,7 +20,7 @@ bool BlockReader::readSlice(Slice& s)
     return false;
 }
 
-bool BlockWriter::writeSlice(Slice& s)
+bool BlockWriter::writeSlice(const Slice& s)
 {
     size_t sz = s.size();
     if( writeUInt32(sz)) {

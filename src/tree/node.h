@@ -34,6 +34,7 @@ public:
     }
     
     Slice       key;
+    Slice       filter;
     bid_t       child;
 
     // msgbuf, NULL if not loaded yet
@@ -345,6 +346,7 @@ public:
     void rm_pivot(bid_t nid, std::vector<DataNode*>& path);
 
     size_t pivot_size(Slice key);
+    size_t bloom_size(int n);
     
     size_t size();
 
@@ -364,6 +366,7 @@ protected:
     int find_pivot(Slice k);
     
     MsgBuf* msgbuf(int idx);
+    MsgBuf* msgbuf(int idx, Slice& key);
 
     bid_t child(int idx);
     void set_child(int idx, bid_t c);
@@ -393,6 +396,7 @@ protected:
 
     bid_t first_child_;
     MsgBuf* first_msgbuf_;
+    Slice first_filter_;
     uint32_t first_msgbuf_offset_;
     uint32_t first_msgbuf_length_;
     uint32_t first_msgbuf_uncompressed_length_;
@@ -461,6 +465,7 @@ private:
     // each bucket can be loaded individually
     struct BucketInfo{
         Slice               key;
+        Slice               filter;
         uint32_t            offset;
         uint32_t            length;
         uint32_t            uncompressed_length;

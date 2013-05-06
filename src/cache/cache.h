@@ -19,6 +19,7 @@ namespace cascadb {
 class NodeFactory {
 public:
     virtual Node* new_node(bid_t nid) = 0;
+    virtual ~NodeFactory(){}
 };
 
 // Node cache of fixed size

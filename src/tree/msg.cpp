@@ -7,6 +7,7 @@
 
 #include "msg.h"
 #include "keycomp.h"
+#include "util/bloom.h"
 
 using namespace std;
 using namespace cascadb;
@@ -139,4 +140,17 @@ bool MsgBuf::write_to(BlockWriter& writer)
         if (!it->write_to(writer)) return false;
     }
     return true;
+}
+
+void MsgBuf::get_filter(std::string* filter)
+{
+    std::vector<Slice> key_slices;
+    key_slices.reserve(container_.size());
+
+    for(ContainerType::iterator it = container_.begin(); 
+        it != container_.end(); it++ ) {
+        key_slices.push_back(it->key);
+    }
+
+    bloom_create(&key_slices[0], key_slices.size(), filter);
 }
