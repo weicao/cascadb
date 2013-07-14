@@ -71,7 +71,7 @@ TEST(DB, batch_write) {
     opts.leaf_node_page_size = 4 * 1024;
     opts.leaf_node_bucket_size = 512;
     opts.cache_limit = 32 * 1024;
-    opts.compress = kSnappyCompress;
+    opts.compress = kNoCompress;
 
     DB *db = DB::open("test_db", opts);
     ASSERT_TRUE(db != NULL);
@@ -119,7 +119,7 @@ TEST(DB, batch_delete) {
     opts.leaf_node_page_size = 4 * 1024;
     opts.leaf_node_bucket_size = 512;
     opts.cache_limit = 32 * 1024;
-    opts.compress = kSnappyCompress;
+    opts.compress = kNoCompress;
 
     DB *db = DB::open("test_db", opts);
     ASSERT_TRUE(db != NULL);
