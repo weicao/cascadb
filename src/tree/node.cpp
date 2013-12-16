@@ -83,6 +83,13 @@ bool InnerNode::write(const Msg& m)
 {
     read_lock();
 
+    // If the tree has been grown up, we must 
+    // rewrite this msg from the newly created root.
+    if (tree_->root()->nid() != nid_) {
+        unlock(); 
+        return tree_->root()->write(m);
+    }
+
     if (status_ == kSkeletonLoaded) {
         load_all_msgbuf();
     }
@@ -414,8 +421,6 @@ void InnerNode::split(std::vector<DataNode*>& path)
     ni->dec_ref();
 
     path.pop_back();
-    unlock();
-    dec_ref();
     
     // propagation
     if( path.size() == 0) {
@@ -443,6 +448,14 @@ void InnerNode::split(std::vector<DataNode*>& path)
         assert(parent);
         parent->add_pivot(k, ni->nid_, path);
     }
+
+    // Almost no loss of efficiency if we place unlock() 
+    // in the end of this function.
+    
+    // For some extremely lock contention environment,
+    // we must hold the write_lock() untill the tree pileup.
+    unlock();
+    dec_ref();
 }
 
 void InnerNode::rm_pivot(bid_t nid, std::vector<DataNode*>& path)
